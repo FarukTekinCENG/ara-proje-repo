@@ -1,0 +1,9 @@
+venv/
+
+build/
+
+job_descriptions.csv
+
+__pycache__/
+
+*.log
