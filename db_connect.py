@@ -1,7 +1,17 @@
+from dotenv import load_dotenv
+import os
 import sqlite3
 
-# 1️⃣ Veritabanına bağlan (yoksa oluşturur)
-conn = sqlite3.connect("/home/desktop/DataGripProjects/dataset/identifier.sqlite")
+# .env dosyasını yükle
+load_dotenv()
+
+db_path = os.getenv("DB_PATH")
+print("DB_PATH:", db_path)  # test için
+
+if db_path is None:
+    raise ValueError("DB_PATH environment variable is not set!")
+
+conn = sqlite3.connect(db_path)
 
 # 2️⃣ Cursor oluştur (SQL sorguları için)
 cur = conn.cursor()
