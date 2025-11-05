@@ -1,0 +1,70 @@
+
+# 1 Gerekli kütüphanelerin kurulumu ve import edilmesi
+
+!pip install -q kaggle sentence-transformers pandas torch
+
+import pandas as pd
+import torch
+from sentence_transformers import SentenceTransformer, util
+
+
+# 2 Kaggle API ayarları
+
+!mkdir -p ~/.kaggle
+!cp /content/kaggle.json ~/.kaggle/
+!chmod 600 ~/.kaggle/kaggle.json
+
+
+# 3 Veri setinin indirilmesi ve açılması
+
+!kaggle datasets download -d ravindrasinghrana/job-description-dataset
+!unzip -o job-description-dataset.zip -d dataset
+
+# CSV dosyasını yükle
+df = pd.read_csv("/content/dataset/job_descriptions.csv")
+print("✅ Veri başarıyla yüklendi. Toplam satır sayısı:", len(df))
+print("Sütunlar:", df.columns.tolist())
+
+
+# 4 SentenceTransformer modelini yükleme
+
+model = SentenceTransformer("all-MiniLM-L6-v2")
+
+
+# 5 Work Type ile diğer sütunlar arasındaki
+#    satır bazlı anlamsal benzerliğin hesaplanması
+
+target_col = "Work Type"
+columns_to_compare = [col for col in df.columns if col != target_col]
+
+# Büyük veri setlerinde işlem süresini kısaltmak için örneklem alınabilir
+df_sample = df[[target_col] + columns_to_compare].dropna().astype(str).head(1000)
+
+similarity_results = {}
+
+for col in columns_to_compare:
+    print(f"🔹 '{target_col}' ↔ '{col}' benzerliği hesaplanıyor...")
+
+    sims = []
+    for _, row in df_sample.iterrows():
+        text_a = row[target_col]
+        text_b = row[col]
+
+        emb_a = model.encode(text_a, convert_to_tensor=True)
+        emb_b = model.encode(text_b, convert_to_tensor=True)
+
+        # Cosine similarity değeri hesaplanır
+        sim = util.cos_sim(emb_a, emb_b).item()
+        sims.append(sim)
+    
+    # Her sütun için ortalama benzerlik skoru
+    similarity_results[col] = sum(sims) / len(sims)
+
+
+# 6 Sonuçların sıralanması ve ekrana yazdırılması
+
+sorted_results = dict(sorted(similarity_results.items(), key=lambda x: x[1], reverse=True))
+
+print("\n✅ Work Type ile sütun bazında ortalama anlamsal benzerlik skorları:")
+for col, score in sorted_results.items():
+    print(f"{col:<25} : {score:.4f}")
