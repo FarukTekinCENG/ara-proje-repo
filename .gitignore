@@ -1,0 +1,13 @@
+=4.48.0
+.env
+.venv/
+venv/
+build/
+__pycache__/
+fine_tuned_eurobert/
+results/
+*.jsonl
+*.log
+*.csv
+*.zip
+*.python-version
