@@ -7,8 +7,7 @@ from dotenv import load_dotenv
 class database:
     query_list = {
         1: "SELECT * FROM pool WHERE is_labelled = 'FALSE' ORDER BY id LIMIT %s OFFSET %s;",  # samples with no label
-        2: "SELECT COUNT(*) FROM postings;",
-        3: ""
+        2: "UPDATE pool SET model_prediction = %s, uncertainty_score = %s WHERE id = %s;"
     }
 
     @staticmethod
@@ -65,6 +64,15 @@ class database:
                 cursor.execute(database.query_list[1], (batch_size, offset))
                 results = cursor.fetchall()
                 return results
+
+    @staticmethod
+    def save_model_prediction(sample_id: int, predicted_class: str, uncertainty_score: float):
+        query = database.query_list[2]
+        with database.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (predicted_class, uncertainty_score, sample_id))
+            conn.commit()
+
 
 if __name__ == '__main__':
     database.run_query(2)

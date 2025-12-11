@@ -53,25 +53,20 @@ class ActiveLearning:
 
             for x in batch:
                 # make model predict
-                # load model, give input, take output
+                # get model answer
                 single_result = predictor.predict(x[1])
                 print(single_result["predicted_class"])
                 print(single_result["confidence"])
                  
                 # save model answer db
-                
-                # calc score
-                #uncertainty_score=calc_score()
-                uncertainty_score=1-single_result["confidence"]
-
                 # save score db
-                #save_score_db(uncertainty_score)
-
-    # @staticmethod
-    # def calc_score():
-    #     # ...
-    #     # calc score
-    #
+                print(x)
+                uncertainty=1-single_result["confidence"]
+                database.save_model_prediction(
+                    sample_id=x[0],
+                    predicted_class=single_result["predicted_class"],
+                    uncertainty_score=uncertainty
+                )                
 
     # @staticmethod
     # def select_samples_to_train(N=100):
@@ -88,6 +83,7 @@ class ActiveLearning:
     # def train_iterate(samples, labels):
     #     train.pipeline(samples, labels)
     #
+
     # @staticmethod
     # def check_stop_condition():
     #     ...
@@ -100,7 +96,7 @@ class ActiveLearning:
     def run(max_samples=None):
         # TEST: Sadece 1 iterasyon çalıştır
         print("Running single iteration for testing...")
-        UncertaintySampling.model_predict(max_samples)
+        ActiveLearning.model_predict(max_samples)
         print("Test iteration completed")        
 
         # ESAS KOD
