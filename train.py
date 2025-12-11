@@ -42,7 +42,7 @@ class JobClassifierTrainer:
     
     def prepare_datasets_from_tuples(self, tuple_list, 
                                    description_index=4,  # None gördüğümüz index
-                                   label_index=2,        # 'Full-time' gördüğümüz index
+                                   label_index=3,        # 'Full-time' gördüğümüz index
                                    test_size=0.2,
                                    seed=42):
         """
@@ -64,11 +64,11 @@ class JobClassifierTrainer:
         print(f"Tuple uzunluğu: {len(tuple_list[0])}")
         print(f"Örnek tuple: {tuple_list[0]}")
         
-        # Tuple yapısını analiz et
-        for i, tup in enumerate(tuple_list[:3]):
-            print(f"Tuple {i}: {tup}")
-            for j, item in enumerate(tup):
-                print(f"  [{j}]: {type(item)} = {item}")
+        # # Tuple yapısını analiz et
+        # for i, tup in enumerate(tuple_list[:3]):
+        #     print(f"Tuple {i}: {tup}")
+        #     for j, item in enumerate(tup):
+        #         print(f"  [{j}]: {type(item)} = {item}")
         
         # Description ve label'ları ayıkla
         descriptions = []
@@ -203,7 +203,7 @@ class JobClassifierTrainer:
         
         return trainer
 
-    def pipeline(self, tuple_list, device="cpu", description_index=4, label_index=2):
+    def pipeline(self, tuple_list, device="cpu", description_index=4, label_index=3):
         """
         Tuple listesiyle tüm pipeline
         

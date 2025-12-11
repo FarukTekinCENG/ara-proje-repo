@@ -4,14 +4,14 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.insert(0, parent_dir)
 
-import train
+from train import JobClassifierTrainer
 from model import ModelPredictor
 
 from data_utils.database import database
 
 class ActiveLearning:
     hyper_params = {
-        "N": 100,       # number of samples selected each iteration
+        "N": 5,       # number of samples selected each iteration
         "I": 0.001,     # ...
         "T": 0.85       # model prediction certainty threshold
     }
@@ -36,7 +36,6 @@ class ActiveLearning:
             offset = page * batch_size
             batch=database.get_unlabelled_samples(batch_size, offset)
             
-
             if not batch:
                 break
                 
@@ -60,7 +59,7 @@ class ActiveLearning:
                  
                 # save model answer db
                 # save score db
-                print(x)
+                #print(x)
                 uncertainty=1-single_result["confidence"]
                 database.save_model_prediction(
                     sample_id=x[0],
@@ -68,50 +67,51 @@ class ActiveLearning:
                     uncertainty_score=uncertainty
                 )                
 
-    # @staticmethod
-    # def select_samples_to_train(N=100):
-    #     # ...
-    #
-
-    # @staticmethod
-    # def prep_labels():
-    #     # ...
-    #     # for real scenarios > at this stage: label unlabelled data
-    #
-
-    # @staticmethod
-    # def train_iterate(samples, labels):
-    #     train.pipeline(samples, labels)
-    #
-
-    # @staticmethod
-    # def check_stop_condition():
-    #     ...
-    #     # until:
-    #     # (no unlabelled sample left in pool) V
-    #     # (no imporovements achieved better than I in last 2 rounds of training) V
-    #     # (model trust is above T Threshold)
+    @staticmethod
+    def prep_labels(samples):
+        # for real scenarios > at this stage: label unlabelled data
+        # manual labelling or ai supported labelling
+        print("now label your suggested samples...")
+        # (UPDATE is_labelled TRUE) AND (UPDATE LABEL [both in dataset and pool])
+        return samples
 
     @staticmethod
-    def run(max_samples=None):
-        # TEST: Sadece 1 iterasyon çalıştır
-        print("Running single iteration for testing...")
-        ActiveLearning.model_predict(max_samples)
-        print("Test iteration completed")        
+    def train_iterate(samples, labels=None):
+        trainer = JobClassifierTrainer()
+        trainer.pipeline(samples, labels)
 
-        # ESAS KOD
-        # condition='unmet'
-        #
-        # while condition=='unmet':
-        #     UncertaintySampling.model_predict(max_samples)
-        #     # calc_scores()
-        #     # samples=select_samples_to_train(hyper_params["N"])
-        #     # labels=prep_labels(samples)
-        #     # train_iterate(samples, labels)
-        #     # condition=check_stop_condition()
-        #
+    @staticmethod
+    def check_stop_condition():
+        ...
+        # until:
+        # (no unlabelled sample left in pool) V
+        # (no imporovements achieved better than I in last 2 rounds of training) V
+        # (model trust is above T Threshold)
+        return 'met'
+
+    @staticmethod
+    def uncertainty_sampling(max_samples=None):
+        condition='unmet'
+
+        while condition=='unmet':
+            # let model make predictions
+            ActiveLearning.model_predict(max_samples)
+            
+            # select samples with Uncertainty Sampling
+            selected_samples = database.select_samples_to_train(ActiveLearning.hyper_params["N"])
+            #print(selected_samples)
+            
+            # label selected samples
+            selected_samples_labelled = ActiveLearning.prep_labels(selected_samples)
+            
+            # re-train with labelled data
+            ActiveLearning.train_iterate(selected_samples_labelled)
+            
+            # check stop condition
+            condition = ActiveLearning.check_stop_condition()
+        
         # print("success: ... rounds of training: ... max labels: ...")
 
 if __name__ == '__main__':
-    ActiveLearning.run(5)
+    ActiveLearning.uncertainty_sampling(50)
 
