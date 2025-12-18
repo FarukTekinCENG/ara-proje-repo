@@ -11,15 +11,19 @@ class database:
         1: "SELECT * FROM pool WHERE is_labelled = 'FALSE' ORDER BY id LIMIT %s OFFSET %s;",  # samples with no label
         2: "UPDATE pool SET model_prediction = %s, uncertainty_score = %s WHERE id = %s;",
         3: """
-            SELECT *
-            FROM pool
-            WHERE is_labelled = 'FALSE'
-              AND model_prediction IS NOT NULL
-              AND label IS NOT NULL
-              AND model_prediction IS DISTINCT FROM label
-            ORDER BY uncertainty_score DESC
-            LIMIT %s;
-            """
+        SELECT *
+        FROM pool
+        WHERE is_labelled = 'FALSE'
+          AND model_prediction IS NOT NULL
+        ORDER BY uncertainty_score DESC
+        LIMIT %s;
+        """,
+        4: """
+        SELECT COUNT(*)
+        FROM pool
+        WHERE is_labelled = 'FALSE';
+        
+        """
     }
 
     @staticmethod
@@ -91,17 +95,40 @@ class database:
             conn.commit()
 
     @staticmethod
-    def select_samples_to_train(N=100):
-        # (SELECT is_labelled=FALSE) AND
-        # (model_prediction != label) AND
-        # (ORDER BY uncertainty_score DESC) AND
-        # (LIMIT = N)        
+    def uncertainty_sampling_selection(N=100):      
         query = database.query_list[3]
         with database.get_db_connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(query, (N,))
                 return cursor.fetchall()
+    
+    @staticmethod
+    def is_all_labelled():
+        query = database.query_list[4]
+        with database.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query)
+                return cursor.fetchall()
+
+    @staticmethod
+    def get_all_uncertainty_scores():
+        """
+        Pool'daki tüm model tahminlerinin uncertainty_score'larını liste olarak döner
+        """
+        query = """
+            SELECT uncertainty_score
+            FROM pool
+            WHERE model_prediction IS NOT NULL;
+        """
+        with database.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query)
+                results = cursor.fetchall()
+                # results [(0.23,), (0.1,), ...] şeklinde gelir, sadece değerleri al
+                scores = [row[0] for row in results]
+                return scores
 
 if __name__ == '__main__':
     database.run_query(2)
     print(database.get_unlabelled_samples())
+    print(database.is_all_labelled())
