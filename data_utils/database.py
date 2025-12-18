@@ -128,6 +128,19 @@ class database:
                 scores = [row[0] for row in results]
                 return scores
 
+    @staticmethod
+    def update_labelled_sample(sample_id, label):
+        query = """
+            UPDATE pool
+            SET label = %s, is_labelled = TRUE
+            WHERE id = %s;
+        """
+        with database.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (label, sample_id))
+            conn.commit()
+
+
 if __name__ == '__main__':
     database.run_query(2)
     print(database.get_unlabelled_samples())

@@ -83,7 +83,14 @@ class ActiveLearning:
 
     @staticmethod
     def prep_labels(samples):
-        print("Please label your suggested samples...")
+        print("Please label your suggested samples... (simulated)")
+
+        for sample in samples:
+            sample_id = sample[0]
+            predicted_label = sample[3]  # ya da simüle edilmiş label
+            # DB’de güncelle
+            database.update_labelled_sample(sample_id, predicted_label)
+
         return samples
 
     @staticmethod
@@ -160,3 +167,4 @@ class ActiveLearning:
 
 if __name__ == '__main__':
     ActiveLearning.uncertainty_sampling(max_samples=50)
+
