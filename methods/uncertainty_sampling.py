@@ -96,10 +96,22 @@ class ActiveLearning:
     @staticmethod
     def train_iterate(samples, previous_trainer=None):
         trainer = JobClassifierTrainer()
-        if previous_trainer:
+
+        # 🔒 GARANTİ: tokenizer + model her zaman hazır
+        if os.path.exists("./fine_tuned_eurobert"):
             trainer.load_model("./fine_tuned_eurobert")
-        trained_trainer = trainer.pipeline(samples, description_index=1, label_index=3)
+        else:
+            trainer.initialize_model()
+
+        train_ds, eval_ds = trainer.prepare_datasets_from_tuples(
+            samples,
+            description_index=1,
+            label_index=3
+        )
+
+        trained_trainer = trainer.train(train_ds, eval_ds)
         trainer.save_model("./fine_tuned_eurobert", trained_trainer)
+
         return trained_trainer
 
     @staticmethod
