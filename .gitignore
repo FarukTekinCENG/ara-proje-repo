@@ -6,6 +6,7 @@ build/
 __pycache__/
 fine_tuned_eurobert/
 results/
+tests/
 *.jsonl
 *.log
 *.csv
