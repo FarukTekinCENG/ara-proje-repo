@@ -101,6 +101,71 @@ class database:
             with conn.cursor() as cursor:
                 cursor.execute(query, (N,))
                 return cursor.fetchall()
+
+    @staticmethod
+    def diversity_sampling_selection(N=100, embedding_model_name="sentence-transformers/all-MiniLM-L6-v2"):
+        """
+        Diversity sampling ile örnek seçer
+        KMeans tabanlı kümeleme kullanır
+        """
+        import numpy as np
+        from sentence_transformers import SentenceTransformer
+        from sklearn.cluster import KMeans
+        
+        # Etiketsiz örnekleri çek
+        samples = database.get_all_unlabelled_with_labels()
+        if not samples or len(samples) < N:
+            # Eğer yeterli örnek yoksa, mevcut olanları döndür
+            return samples[:N] if samples else []
+        
+        ids = [s[0] for s in samples]
+        descriptions = [s[1] for s in samples]
+        labels = [s[2] for s in samples]
+        
+        # Embedding hesapla
+        print(f"Diversity sampling: {len(descriptions)} örnek için embedding hesaplanıyor...")
+        model = SentenceTransformer(embedding_model_name)
+        embeddings = model.encode(descriptions, batch_size=64, show_progress_bar=False, convert_to_numpy=True)
+        
+        # KMeans ile diversity sampling
+        n_samples = min(N, len(embeddings))
+        if len(embeddings) <= n_samples:
+            selected_indices = np.arange(len(embeddings))
+        else:
+            kmeans = KMeans(n_clusters=n_samples, random_state=42, n_init="auto")
+            kmeans.fit(embeddings)
+            cluster_labels = kmeans.labels_
+            centers = kmeans.cluster_centers_
+            
+            selected_indices = []
+            for cluster_id in range(n_samples):
+                idxs = np.where(cluster_labels == cluster_id)[0]
+                if len(idxs) == 0:
+                    continue
+                
+                pts = embeddings[idxs]
+                center = centers[cluster_id]
+                dist = np.linalg.norm(pts - center, axis=1)
+                closest_idx = idxs[np.argmin(dist)]
+                selected_indices.append(closest_idx)
+            
+            selected_indices = np.array(selected_indices)
+        
+        # Seçilen örnekleri döndür (uncertainty_sampling_selection ile aynı format)
+        # Format: (id, description, is_labelled, label, model_prediction, uncertainty_score)
+        selected_samples = []
+        for idx in selected_indices:
+            selected_samples.append((
+                ids[idx],
+                descriptions[idx],
+                'FALSE',  # is_labelled
+                labels[idx],  # label
+                None,  # model_prediction
+                None   # uncertainty_score
+            ))
+        
+        print(f"Diversity sampling: {len(selected_samples)} örnek seçildi.")
+        return selected_samples
     
     @staticmethod
     def is_all_labelled():
@@ -132,13 +197,146 @@ class database:
     def update_labelled_sample(sample_id, label):
         query = """
             UPDATE pool
-            SET label = %s, is_labelled = TRUE
+            SET label = %s, is_labelled = 'TRUE'
             WHERE id = %s;
         """
         with database.get_db_connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(query, (label, sample_id))
             conn.commit()
+
+    @staticmethod
+    def get_unlabelled_with_labels(batch_size=None, offset=0):
+        """
+        Diversity sampling için: Etiketsiz örnekleri description ve label ile birlikte döner
+        (label zaten var, sadece is_labelled = 'FALSE')
+        """
+        if batch_size is None:
+            query = """
+                SELECT id, description, label
+                FROM pool
+                WHERE is_labelled = 'FALSE'
+                  AND description IS NOT NULL
+                  AND label IS NOT NULL
+                ORDER BY id
+                OFFSET %s;
+            """
+            params = (offset,)
+        else:
+            query = """
+                SELECT id, description, label
+                FROM pool
+                WHERE is_labelled = 'FALSE'
+                  AND description IS NOT NULL
+                  AND label IS NOT NULL
+                ORDER BY id
+                LIMIT %s OFFSET %s;
+            """
+            params = (batch_size, offset)
+        
+        with database.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, params)
+                return cursor.fetchall()
+
+    @staticmethod
+    def get_all_unlabelled_with_labels():
+        """
+        Tüm etiketsiz örnekleri description ve label ile birlikte döner
+        """
+        query = """
+            SELECT id, description, label
+            FROM pool
+            WHERE is_labelled = 'FALSE'
+              AND description IS NOT NULL
+              AND label IS NOT NULL
+            ORDER BY id;
+        """
+        with database.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query)
+                return cursor.fetchall()
+
+    @staticmethod
+    def get_labelled_samples():
+        """
+        Etiketli örnekleri döner (eğitim için)
+        """
+        query = """
+            SELECT id, description, label
+            FROM pool
+            WHERE is_labelled = 'TRUE'
+              AND description IS NOT NULL
+              AND label IS NOT NULL
+            ORDER BY id;
+        """
+        with database.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query)
+                return cursor.fetchall()
+
+    @staticmethod
+    def mark_samples_as_labelled(sample_ids):
+        """
+        Seçilen örnekleri etiketli olarak işaretle (label zaten var)
+        """
+        if not sample_ids:
+            return
+        
+        placeholders = ','.join(['%s'] * len(sample_ids))
+        query = f"""
+            UPDATE pool
+            SET is_labelled = 'TRUE'
+            WHERE id IN ({placeholders});
+        """
+        with database.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, tuple(sample_ids))
+            conn.commit()
+
+    @staticmethod
+    def initialize_labeled_pool(initial_size=100, random_seed=42):
+        """
+        Başlangıç için rastgele bir kısmı labeled olarak işaretle
+        """
+        # PostgreSQL'de RANDOM() kullan (küçük setler için sorun yok)
+        query = """
+            UPDATE pool
+            SET is_labelled = 'TRUE'
+            WHERE id IN (
+                SELECT id 
+                FROM pool 
+                WHERE is_labelled = 'FALSE'
+                  AND description IS NOT NULL
+                  AND label IS NOT NULL
+                ORDER BY RANDOM()
+                LIMIT %s
+            );
+        """
+        with database.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (initial_size,))
+                affected_rows = cursor.rowcount
+            conn.commit()
+        print(f"Başlangıç için {affected_rows} örnek labeled olarak işaretlendi.")
+
+    @staticmethod
+    def get_unlabelled_count():
+        """
+        Etiketsiz örnek sayısını döner
+        """
+        query = """
+            SELECT COUNT(*)
+            FROM pool
+            WHERE is_labelled = 'FALSE'
+              AND description IS NOT NULL
+              AND label IS NOT NULL;
+        """
+        with database.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query)
+                result = cursor.fetchone()
+                return result[0] if result else 0
 
 
 if __name__ == '__main__':

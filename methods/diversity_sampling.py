@@ -6,19 +6,17 @@ parent_dir = os.path.dirname(current_dir)
 sys.path.insert(0, parent_dir)
 
 from train import JobClassifierTrainer
-from model import ModelPredictor
 from data_utils.database import database
 import re
 
 class ActiveLearning:
     hyper_params = {
-        "N": 5,         # number of samples selected each iteration
+        "N": 100,        # number of samples selected each iteration
         "I": 0.001,     # improvement threshold
-        "T": 0.3        # model prediction certainty threshold
     }
 
     @staticmethod
-    def get_next_test_folder(base_path="./tests"):
+    def get_next_test_folder(base_path="./tests/diversity_sampling"):
         os.makedirs(base_path, exist_ok=True)
         existing = sorted([d for d in os.listdir(base_path) if d.startswith("test")])
         if not existing:
@@ -46,50 +44,14 @@ class ActiveLearning:
 
 
     @staticmethod
-    def model_predict(max_samples=None):
-        predictor = ModelPredictor("./fine_tuned_eurobert")
-
-        batch_size = 1000
-        total_processed = 0
-        page = 0
-
-        while True:
-            if max_samples is not None and total_processed >= max_samples:
-                print(f"Max samples limit reached: {max_samples}")
-                break
-
-            offset = page * batch_size
-            batch = database.get_unlabelled_samples(batch_size, offset)
-            if not batch:
-                break
-
-            if max_samples is not None:
-                remaining = max_samples - total_processed
-                if len(batch) > remaining:
-                    batch = batch[:remaining]
-
-            print(f"Page {page}: {len(batch)} records")
-            total_processed += len(batch)
-            page += 1
-
-            for x in batch:
-                result = predictor.predict(x[1])
-                uncertainty = 1 - result["confidence"]
-                database.save_model_prediction(
-                    sample_id=x[0],
-                    predicted_class=result["predicted_class"],
-                    uncertainty_score=uncertainty
-                )
-
-    @staticmethod
     def prep_labels(samples):
         print("Please label your suggested samples... (simulated)")
-
+        
         for sample in samples:
             sample_id = sample[0]
-            predicted_label = sample[3]  # ya da simüle edilmiş label
-            # DB’de güncelle
-            database.update_labelled_sample(sample_id, predicted_label)
+            label = sample[3]  # label zaten var (work_type)
+            # DB'de güncelle
+            database.update_labelled_sample(sample_id, label)
 
         return samples
 
@@ -115,20 +77,24 @@ class ActiveLearning:
         return trained_trainer
 
     @staticmethod
-    def check_stop_condition(test_folder):
-        # Ortalama uncertainty üzerinden T threshold kontrolü
-        pool_scores = database.get_all_uncertainty_scores()
-        if not pool_scores:
+    def check_stop_condition(test_folder, previous_accuracy, new_accuracy):
+        # İyileşme kontrolü
+        if previous_accuracy is None:
+            return False, None
+        
+        improvement = new_accuracy - previous_accuracy
+        if improvement < ActiveLearning.hyper_params["I"]:
+            return True, "min_improvement_not_met"
+        
+        # Havuz kontrolü
+        unlabeled_count = database.get_unlabelled_count()
+        if unlabeled_count == 0:
             return True, "pool_empty"
-        # Stringleri float'a çevir
-        pool_scores = [float(x) for x in pool_scores]
-        avg_score = sum(pool_scores)/len(pool_scores)
-        if avg_score < ActiveLearning.hyper_params["T"]:
-            return True, "T_threshold_reached"
+        
         return False, None
 
     @staticmethod
-    def uncertainty_sampling(max_samples=None):
+    def diversity_sampling(max_samples=None):
         # Test klasörünü otomatik oluştur
         test_folder = ActiveLearning.get_next_test_folder()
         os.makedirs(test_folder, exist_ok=True)
@@ -136,17 +102,22 @@ class ActiveLearning:
         iteration = 1
         previous_accuracy = None
 
+        # Başlangıç için etiketli veri yoksa oluştur
+        labeled_samples = database.get_labelled_samples()
+        if not labeled_samples:
+            print("Etiketli veri bulunamadı. Başlangıç için 100 örnek labeled olarak işaretleniyor...")
+            database.initialize_labeled_pool(initial_size=100, random_seed=42)
+
         while True:
-            # 1. Model tahmini
-            ActiveLearning.model_predict(max_samples)
-
-            # 2. Uncertainty sampling ile seç
-            selected_samples = database.uncertainty_sampling_selection(ActiveLearning.hyper_params["N"])
+            # 1. Diversity sampling ile seç
+            selected_samples = database.diversity_sampling_selection(ActiveLearning.hyper_params["N"])
+            
+            if not selected_samples:
+                print("Seçilecek örnek kalmadı.")
+                break
+            
+            # 2. Etiketle (label'lar zaten var, sadece is_labelled flag'ini güncelle)
             labeled_samples = ActiveLearning.prep_labels(selected_samples)
-
-            # 2. Diversity sampling ile seç (alternatif yöntem)
-            # selected_samples = database.diversity_sampling_selection(ActiveLearning.hyper_params["N"])
-            # labeled_samples = ActiveLearning.prep_labels(selected_samples)
 
             # 3. Modeli eğit / güncelle
             trained_trainer = ActiveLearning.train_iterate(labeled_samples)
@@ -155,9 +126,9 @@ class ActiveLearning:
             new_accuracy = trained_trainer.evaluate().get("eval_accuracy", None)
 
             # 5. Stop condition
-            stop, reason = ActiveLearning.check_stop_condition(test_folder)
+            stop, reason = ActiveLearning.check_stop_condition(test_folder, previous_accuracy, new_accuracy)
 
-            # 6. Sonuçları CSV’ye yaz
+            # 6. Sonuçları CSV'ye yaz
             result_file = ActiveLearning.get_next_result_file(test_folder)
             with open(result_file, "w", newline="") as f:
                 writer = csv.DictWriter(f, fieldnames=[
@@ -182,5 +153,5 @@ class ActiveLearning:
                 break
 
 if __name__ == '__main__':
-    ActiveLearning.uncertainty_sampling(max_samples=50)
+    ActiveLearning.diversity_sampling(max_samples=5000)
 
