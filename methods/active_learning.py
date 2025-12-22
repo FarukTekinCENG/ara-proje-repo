@@ -97,7 +97,7 @@ class ActiveLearning:
     def train_iterate(samples, previous_trainer=None):
         trainer = JobClassifierTrainer()
 
-        # 🔒 GARANTİ: tokenizer + model her zaman hazır
+        # tokenizer + model her zaman hazır
         if os.path.exists("./fine_tuned_eurobert"):
             trainer.load_model("./fine_tuned_eurobert")
         else:
@@ -127,8 +127,18 @@ class ActiveLearning:
             return True, "T_threshold_reached"
         return False, None
 
+
     @staticmethod
-    def uncertainty_sampling(max_samples=None):
+    def uncertainty_sampling():
+        return database.uncertainty_sampling_selection(ActiveLearning.hyper_params["N"])
+
+    @staticmethod
+    def diversity_sampling():
+        # islemler ...
+        return "Diversity Sampling ile secilen ornekler buradan return edilir"
+
+    @staticmethod
+    def run(function_algorithm, max_samples=None):
         # Test klasörünü otomatik oluştur
         test_folder = ActiveLearning.get_next_test_folder()
         os.makedirs(test_folder, exist_ok=True)
@@ -141,12 +151,10 @@ class ActiveLearning:
             ActiveLearning.model_predict(max_samples)
 
             # 2. Uncertainty sampling ile seç
-            selected_samples = database.uncertainty_sampling_selection(ActiveLearning.hyper_params["N"])
-            labeled_samples = ActiveLearning.prep_labels(selected_samples)
+            selected_samples = function_algorithm()
 
-            # 2. Diversity sampling ile seç (alternatif yöntem)
-            # selected_samples = database.diversity_sampling_selection(ActiveLearning.hyper_params["N"])
-            # labeled_samples = ActiveLearning.prep_labels(selected_samples)
+            # ara adim: veriyi etiketle
+            labeled_samples = ActiveLearning.prep_labels(selected_samples)
 
             # 3. Modeli eğit / güncelle
             trained_trainer = ActiveLearning.train_iterate(labeled_samples)
@@ -182,5 +190,5 @@ class ActiveLearning:
                 break
 
 if __name__ == '__main__':
-    ActiveLearning.uncertainty_sampling(max_samples=50)
+    ActiveLearning.run(ActiveLearning.uncertainty_sampling, max_samples=50)
 
