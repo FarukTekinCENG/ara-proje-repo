@@ -134,8 +134,7 @@ class ActiveLearning:
 
     @staticmethod
     def diversity_sampling():
-        # islemler ...
-        return "Diversity Sampling ile secilen ornekler buradan return edilir"
+        return database.diversity_sampling_selection(ActiveLearning.hyper_params["N"])
 
     @staticmethod
     def run(function_algorithm, max_samples=None):
