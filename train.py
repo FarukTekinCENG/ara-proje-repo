@@ -73,6 +73,7 @@ class JobClassifierTrainer:
         label_index=3,
         test_size=0.2,
         seed=42,
+        split=True,
     ):
         descriptions = []
         labels = []
@@ -103,9 +104,11 @@ class JobClassifierTrainer:
             type="torch",
             columns=["input_ids", "attention_mask", "label"],
         )
-
-        split = dataset.train_test_split(test_size=test_size, seed=seed)
-        return split["train"], split["test"]
+        if split:
+            split_ds = dataset.train_test_split(test_size=test_size, seed=seed)
+            return split_ds["train"], split_ds["test"]
+        else:
+            return dataset, None
 
     def train(self, train_dataset, eval_dataset):
         if self.model is None:
@@ -116,9 +119,12 @@ class JobClassifierTrainer:
 
         self.model.to(device)
 
+        # If no eval dataset provided, disable evaluation strategy to avoid Trainer errors
+        eval_strategy = "epoch" if eval_dataset is not None else "no"
+
         training_args = TrainingArguments(
             output_dir="./results",
-            eval_strategy="epoch",  # evaluation_strategy DEĞİL
+            eval_strategy=eval_strategy,
             learning_rate=2e-5,
             per_device_train_batch_size=2,
             per_device_eval_batch_size=2,
@@ -140,6 +146,23 @@ class JobClassifierTrainer:
 
         trainer.train()
         return trainer
+
+    def evaluate(self, test_dataset):
+        """Evaluate the current model on a provided test dataset.
+
+        The `test_dataset` must be tokenized and formatted similarly to the training dataset.
+        Returns the metrics dict from `Trainer.evaluate()`.
+        """
+        if self.model is None:
+            self.initialize_model()
+
+        trainer = Trainer(
+            model=self.model,
+            tokenizer=self.tokenizer,
+            compute_metrics=self.compute_metrics,
+        )
+
+        return trainer.evaluate(eval_dataset=test_dataset)
 
     def save_model(self, output_dir="./fine_tuned_eurobert", trainer=None):
         os.makedirs(output_dir, exist_ok=True)
@@ -170,12 +193,14 @@ if __name__ == "__main__":
     trainer = JobClassifierTrainer()
     trainer.load_model("./fine_tuned_eurobert")
 
+    # Prepare dataset WITHOUT an automatic train/test split: incoming data should be used only for training.
     train_ds, eval_ds = trainer.prepare_datasets_from_tuples(
         samples,
         description_index=1,
         label_index=3,
+        split=False,
     )
 
-    trained_trainer = trainer.train(train_ds, eval_ds)
+    trained_trainer = trainer.train(train_ds, None)
     trainer.save_model("./fine_tuned_eurobert", trained_trainer)
 
