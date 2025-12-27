@@ -9,6 +9,7 @@ from train import JobClassifierTrainer
 from model import ModelPredictor
 from data_utils.database import database
 import re
+import shutil
 
 class ActiveLearning:
     hyper_params = {
@@ -19,6 +20,12 @@ class ActiveLearning:
     BASE_DIR = "./base_classifier"
     RUNS_BASE = "./tests"
     TRAINED_BASE = "./trained_models"
+    # Committee models (HF hub ids or local paths). Update to use desired models.
+    model_list = [
+        "EuroBERT/EuroBERT-210m",
+        "FacebookAI/roberta-base",
+        "google-bert/bert-base-cased",
+    ]
 
     @staticmethod
     def get_next_model_folder(base_path=None):
@@ -159,6 +166,136 @@ class ActiveLearning:
         return database.diversity_sampling_selection(ActiveLearning.hyper_params["N"])
 
     @staticmethod
+    def query_by_comitee():
+        # Simple committee voting selection.
+        # - For each model in `ActiveLearning.model_list` create a temporary table
+        #   `committee_{i}` and populate it with (pool_id, model_prediction, uncertainty_score).
+        # - Aggregate member predictions in Python, compute disagreement (count distinct predictions)
+        #   and select top-N samples with highest disagreement.
+        # - Return samples in the same tuple format as other selection methods.
+        import collections
+        from collections import defaultdict
+
+        N = ActiveLearning.hyper_params.get("N", 5)
+        models = ActiveLearning.model_list
+        created_tables = []
+
+        try:
+            # Create temp tables per member (use permanent tables and drop later to simplify portability)
+            for idx, m in enumerate(models):
+                tbl = f"committee_{idx}"
+                created_tables.append(tbl)
+                create_sql = f"""
+                CREATE TABLE IF NOT EXISTS {tbl} (
+                    pool_id INTEGER PRIMARY KEY,
+                    model_prediction TEXT,
+                    uncertainty_score DOUBLE PRECISION
+                );
+                """
+                with database.get_db_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(create_sql)
+                    conn.commit()
+
+            # For each model, try to load the member (HF id or local). Log detailed status.
+            for idx, model_name in enumerate(models):
+                print(f"[committee] loading member {idx}: {model_name}")
+                predictor = ModelPredictor(model_name)
+                try:
+                    predictor.load_model()
+                    print(f"[committee] member {idx} loaded successfully: {model_name}")
+                except Exception as e:
+                    print(f"[committee] failed to load member {idx} ({model_name}): {e}")
+                    # skip this member
+                    continue
+                batch_size = 1000
+                page = 0
+                rows_to_insert = []
+                while True:
+                    batch = database.get_unlabelled_samples(batch_size, page * batch_size)
+                    if not batch:
+                        break
+                    for x in batch:
+                        pool_id = x[0]
+                        desc = x[1]
+                        try:
+                            res = predictor.predict(desc)
+                            pred = res.get("predicted_class")
+                            probs = res.get("probs")
+                            if probs:
+                                # compute entropy
+                                import math
+                                ent = -sum([p * math.log(p + 1e-12) for p in probs])
+                                unc = float(ent)
+                            else:
+                                unc = 1 - res.get("confidence", 1.0)
+                        except Exception as e:
+                            print(f"[committee] prediction error member {idx} id {pool_id}: {e}")
+                            pred = None
+                            unc = None
+                        rows_to_insert.append((pool_id, pred, unc))
+
+                    # flush batch inserts
+                    if rows_to_insert:
+                        insert_sql = f"INSERT INTO committee_{idx} (pool_id, model_prediction, uncertainty_score) VALUES (%s, %s, %s) ON CONFLICT (pool_id) DO UPDATE SET model_prediction = EXCLUDED.model_prediction, uncertainty_score = EXCLUDED.uncertainty_score;"
+                        with database.get_db_connection() as conn:
+                            with conn.cursor() as cur:
+                                cur.executemany(insert_sql, rows_to_insert)
+                            conn.commit()
+                        rows_to_insert = []
+                    page += 1
+
+            # Read back predictions per member and aggregate
+            preds_by_id = defaultdict(list)  # pool_id -> list of predicted_class
+            uncert_by_id = defaultdict(list)
+            for idx in range(len(models)):
+                table = f"committee_{idx}"
+                with database.get_db_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(f"SELECT pool_id, model_prediction, uncertainty_score FROM {table};")
+                        for pid, mpred, unc in cur.fetchall():
+                            preds_by_id[pid].append(mpred)
+                            if unc is not None:
+                                uncert_by_id[pid].append(float(unc))
+
+            # Compute disagreement score = number of distinct predictions (higher -> more disagreement)
+            scored = []
+            for pid, preds in preds_by_id.items():
+                distinct = len([p for p in set(preds) if p is not None])
+                # tie-breaker: average uncertainty across members (higher -> more uncertain)
+                avg_unc = sum(uncert_by_id.get(pid, [0])) / max(1, len(uncert_by_id.get(pid, [])))
+                score = (distinct, avg_unc)
+                scored.append((pid, score))
+
+            # Sort by distinct desc, then avg_unc desc
+            scored.sort(key=lambda x: (x[1][0], x[1][1]), reverse=True)
+            selected_ids = [s[0] for s in scored[:N]]
+
+            if not selected_ids:
+                return []
+
+            # Fetch full sample rows from pool for the selected ids
+            placeholders = ','.join(['%s'] * len(selected_ids))
+            query = f"SELECT id, description, is_labelled, label, model_prediction, uncertainty_score FROM pool WHERE id IN ({placeholders}) ORDER BY id;"
+            with database.get_db_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, tuple(selected_ids))
+                    rows = cur.fetchall()
+
+            return rows
+
+        finally:
+            # cleanup created tables
+            for tbl in created_tables:
+                try:
+                    with database.get_db_connection() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute(f"DROP TABLE IF EXISTS {tbl};")
+                        conn.commit()
+                except Exception:
+                    pass
+
+    @staticmethod
     def run(function_algorithm, max_samples=None, test_samples=None, test_from_db=True):
         # Ensure base classifier exists
         os.makedirs(ActiveLearning.RUNS_BASE, exist_ok=True)
@@ -167,6 +304,27 @@ class ActiveLearning:
             base_trainer = JobClassifierTrainer()
             base_trainer.initialize_model()
             base_trainer.save_model(ActiveLearning.BASE_DIR)
+
+        # Ensure committee member local paths exist: copy base classifier into missing local dirs
+        for m in ActiveLearning.model_list:
+            if not isinstance(m, str):
+                continue
+            if m == ActiveLearning.BASE_DIR:
+                continue
+            # if path already exists, skip
+            if os.path.exists(m):
+                continue
+            # Heuristic: treat as local path if it starts with '.' or '/' or refers to trained_models
+            if m.startswith('.') or m.startswith('/') or m.startswith(ActiveLearning.TRAINED_BASE) or m.startswith('./') or m.startswith('trained_models'):
+                try:
+                    os.makedirs(os.path.dirname(m), exist_ok=True)
+                    shutil.copytree(ActiveLearning.BASE_DIR, m)
+                    print(f"Initialized committee member from base classifier: {m}")
+                except Exception as e:
+                    print(f"Warning: could not initialize committee member {m}: {e}")
+            else:
+                # assume a HF hub model name (skip local initialization)
+                pass
 
         # Reset pool for a fresh run (clear labels and model predictions)
         try:
@@ -213,7 +371,7 @@ class ActiveLearning:
             # 1. Model tahmini (use current_model_dir)
             ActiveLearning.model_predict(max_samples, model_dir=current_model_dir)
 
-            # 2. Uncertainty sampling ile seç
+            # 2. Algoritma ile etiketlenecek ornekleri sec
             selected_samples = function_algorithm()
 
             # ara adim: veriyi etiketle

@@ -22,26 +22,22 @@ class ModelPredictor:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def load_model(self):
-        # 1️⃣ Yerel model VARSA
-        if os.path.isdir(self.model_path):
-            print(f"Local model found: {self.model_path}")
-
+        # Try loading the requested model (can be a local path or HF hub id).
+        try:
+            print(f"Attempting to load model: {self.model_path}")
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.model_path,
                 trust_remote_code=True,
             )
+            # If model_path is a hub id, specify num_labels to avoid mismatch
             self.model = AutoModelForSequenceClassification.from_pretrained(
                 self.model_path,
+                num_labels=self.num_labels,
                 trust_remote_code=True,
             )
-
-        # 2️⃣ Yerel model YOKSA → base modele düş
-        else:
-            print(
-                f"WARNING: Local model not found ({self.model_path}). "
-                f"Falling back to base model: {self.fallback_model}"
-            )
-
+        except Exception as e:
+            print(f"Warning: failed to load requested model {self.model_path}: {e}")
+            print(f"Falling back to {self.fallback_model}")
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.fallback_model,
                 trust_remote_code=True,
@@ -73,8 +69,12 @@ class ModelPredictor:
 
         confidence, predicted_class = torch.max(probs, dim=-1)
 
+        # Return full probabilities as a list for downstream metrics (entropy, etc.)
+        probs_list = probs[0].cpu().tolist()
+
         return {
             "predicted_class": int(predicted_class.item()),
             "confidence": float(confidence.item()),
+            "probs": probs_list,
         }
 
