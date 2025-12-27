@@ -74,6 +74,7 @@ class JobClassifierTrainer:
         test_size=0.2,
         seed=42,
         split=True,
+        fit_label_encoder=True,
     ):
         descriptions = []
         labels = []
@@ -89,8 +90,13 @@ class JobClassifierTrainer:
                 descriptions.append(str(desc))
                 labels.append(str(label))
 
-        self.label_encoder = LabelEncoder()
-        encoded_labels = self.label_encoder.fit_transform(labels)
+        if fit_label_encoder:
+            self.label_encoder = LabelEncoder()
+            encoded_labels = self.label_encoder.fit_transform(labels)
+        else:
+            if self.label_encoder is None:
+                raise ValueError("label_encoder is not initialized; cannot transform labels")
+            encoded_labels = self.label_encoder.transform(labels)
 
         dataset = Dataset.from_dict(
             {
@@ -163,6 +169,20 @@ class JobClassifierTrainer:
         )
 
         return trainer.evaluate(eval_dataset=test_dataset)
+
+    def build_dataset_from_tuples(self, tuple_list, description_index=1, label_index=3):
+        # Deprecated: use `prepare_datasets_from_tuples(..., fit_label_encoder=False, split=False)` instead
+        return self.prepare_datasets_from_tuples(tuple_list, description_index, label_index, split=False, fit_label_encoder=False)
+
+    def evaluate_on_tuples(self, tuple_list, description_index=1, label_index=3):
+        """Build dataset from tuples and evaluate the current model on it.
+
+        Returns metrics dict or raises ValueError if dataset couldn't be built.
+        """
+        ds, _ = self.prepare_datasets_from_tuples(tuple_list, description_index, label_index, split=False, fit_label_encoder=False)
+        if ds is None:
+            raise ValueError("No valid test examples to evaluate")
+        return self.evaluate(ds)
 
     def save_model(self, output_dir="./fine_tuned_eurobert", trainer=None):
         os.makedirs(output_dir, exist_ok=True)

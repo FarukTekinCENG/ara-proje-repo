@@ -206,32 +206,12 @@ class ActiveLearning:
             # 4. Accuracy kontrolü
             new_accuracy = None
 
-            # If an external test set is provided, evaluate on it using the trained trainer object
+            # If an external test set is provided, evaluate on it using trainer helper
             if test_samples:
-                # Build test dataset using trainer's label encoder and tokenizer
-                descriptions = []
-                labels = []
-                for row in test_samples:
-                    if len(row) > 3 and row[1] and row[3] is not None:
-                        descriptions.append(str(row[1]))
-                        labels.append(str(row[3]))
-
-                if trainer_obj.label_encoder is not None and labels:
-                    try:
-                        encoded_labels = trainer_obj.label_encoder.transform(labels)
-                        from datasets import Dataset
-                        test_ds = Dataset.from_dict({
-                            "description": descriptions,
-                            "label": encoded_labels,
-                        })
-                        test_ds = test_ds.map(trainer_obj.tokenize_function, batched=True)
-                        test_ds.set_format(type="torch", columns=["input_ids", "attention_mask", "label"])
-
-                        metrics = trainer_obj.evaluate(test_ds)
-                        new_accuracy = metrics.get("eval_accuracy", None)
-                    except Exception:
-                        new_accuracy = None
-                else:
+                try:
+                    metrics = trainer_obj.evaluate_on_tuples(test_samples)
+                    new_accuracy = metrics.get("eval_accuracy", None)
+                except Exception:
                     new_accuracy = None
 
             # 5. Stop condition
