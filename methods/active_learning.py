@@ -159,7 +159,7 @@ class ActiveLearning:
         return database.diversity_sampling_selection(ActiveLearning.hyper_params["N"])
 
     @staticmethod
-    def run(function_algorithm, max_samples=None, test_samples=None):
+    def run(function_algorithm, max_samples=None, test_samples=None, test_from_db=True):
         # Ensure base classifier exists
         os.makedirs(ActiveLearning.RUNS_BASE, exist_ok=True)
         if not os.path.exists(ActiveLearning.BASE_DIR):
@@ -167,6 +167,13 @@ class ActiveLearning:
             base_trainer = JobClassifierTrainer()
             base_trainer.initialize_model()
             base_trainer.save_model(ActiveLearning.BASE_DIR)
+
+        # Reset pool for a fresh run (clear labels and model predictions)
+        try:
+            reset_res = database.reset_pool(clear_labels=True, clear_predictions=True)
+            print(f"Pool reset: {reset_res}")
+        except Exception as e:
+            print(f"Warning: failed to reset pool: {e}")
 
         # Create a single test run folder for this run
         test_folder = ActiveLearning.get_next_test_folder(base_path=ActiveLearning.RUNS_BASE)
@@ -189,6 +196,15 @@ class ActiveLearning:
 
         iteration = 1
         previous_accuracy = None
+
+        # If requested, load fixed test set from DB once (will be used for all iterations)
+        if test_from_db:
+            try:
+                test_samples = database.get_test_samples()
+                print(f"Loaded {len(test_samples)} test samples from DB")
+            except Exception as e:
+                print(f"Warning: failed to load test samples from DB: {e}")
+                test_samples = None
 
         while True:
             # 1. Model tahmini (use current_model_dir)
@@ -241,7 +257,7 @@ class ActiveLearning:
                     "stop_reason": reason
                 })
 
-            # 7. Save result to Postgres via insert_test_result
+            # 7. Save result to Postgres: prefer remote (Neon) for results, fallback to local
             try:
                 metrics = {"accuracy": new_accuracy} if new_accuracy is not None else None
                 params = {
@@ -249,20 +265,40 @@ class ActiveLearning:
                     "test_folder": test_folder,
                     "previous_accuracy": previous_accuracy,
                 }
-                inserted_id = database.insert_test_result(
-                    test_id=test_id,
-                    iteration_no=iteration,
-                    model_name=getattr(trainer_obj, "model_name", None) or "unknown",
-                    train_data_size=len(labeled_samples) if labeled_samples else 0,
-                    N=ActiveLearning.hyper_params.get("N"),
-                    T=ActiveLearning.hyper_params.get("T"),
-                    I=ActiveLearning.hyper_params.get("I"),
-                    metrics=metrics,
-                    params=params,
-                    run_by=os.getenv("USER") or os.getenv("USERNAME"),
-                    notes=reason,
-                )
-                print(f"Inserted result row id={inserted_id} for test_id={test_id} iteration={iteration}")
+
+                try:
+                    # Try remote insert (requires NEON_API_KEY or DATABASE_URL in env)
+                    inserted_id = database.insert_test_result_remote(
+                        test_id=test_id,
+                        iteration_no=iteration,
+                        model_name=getattr(trainer_obj, "model_name", None) or "unknown",
+                        train_data_size=len(labeled_samples) if labeled_samples else 0,
+                        N=ActiveLearning.hyper_params.get("N"),
+                        T=ActiveLearning.hyper_params.get("T"),
+                        I=ActiveLearning.hyper_params.get("I"),
+                        metrics=metrics,
+                        params=params,
+                        run_by=os.getenv("USER") or os.getenv("USERNAME"),
+                        notes=reason,
+                    )
+                    print(f"Inserted remote result row id={inserted_id} for test_id={test_id} iteration={iteration}")
+                except RuntimeError as re:
+                    # Remote not configured — fall back to local insert
+                    print(f"Remote DB not configured: {re}. Falling back to local DB.")
+                    inserted_id = database.insert_test_result(
+                        test_id=test_id,
+                        iteration_no=iteration,
+                        model_name=getattr(trainer_obj, "model_name", None) or "unknown",
+                        train_data_size=len(labeled_samples) if labeled_samples else 0,
+                        N=ActiveLearning.hyper_params.get("N"),
+                        T=ActiveLearning.hyper_params.get("T"),
+                        I=ActiveLearning.hyper_params.get("I"),
+                        metrics=metrics,
+                        params=params,
+                        run_by=os.getenv("USER") or os.getenv("USERNAME"),
+                        notes=reason,
+                    )
+                    print(f"Inserted local result row id={inserted_id} for test_id={test_id} iteration={iteration}")
             except Exception as e:
                 print(f"Warning: failed to insert result row to DB: {e}")
 

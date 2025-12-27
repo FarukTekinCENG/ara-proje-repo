@@ -163,6 +163,75 @@ class database:
         return inserted[0] if inserted else None
 
     @staticmethod
+    def insert_test_result_remote(test_id: str,
+                                  iteration_no: int,
+                                  model_name: str,
+                                  train_data_size: int,
+                                  N: int = None,
+                                  T: int = None,
+                                  I: int = None,
+                                  metrics: dict = None,
+                                  params: dict = None,
+                                  run_by: str = None,
+                                  notes: str = None):
+        """Insert test result into an online DB using DSN in `NEON_API_KEY` or `DATABASE_URL`.
+
+        This does not affect the local DB connection behavior.
+        """
+        dsn = os.getenv("NEON_API_KEY") or os.getenv("DATABASE_URL")
+        if not dsn:
+            raise RuntimeError("No NEON_API_KEY or DATABASE_URL found in environment for remote insert")
+
+        # ensure local results table exists schema-wise on remote as well
+        create_sql = """
+        CREATE TABLE IF NOT EXISTS results (
+            id SERIAL PRIMARY KEY,
+            test_id TEXT,
+            iteration_no INTEGER,
+            model_name TEXT,
+            train_data_size INTEGER,
+            n INTEGER,
+            t INTEGER,
+            i INTEGER,
+            metrics JSONB,
+            params JSONB,
+            run_by TEXT,
+            notes TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+        );
+        """
+
+        insert_sql = """
+        INSERT INTO results (test_id, iteration_no, model_name, train_data_size, n, t, i, metrics, params, run_by, notes)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id;
+        """
+
+        metrics_json = json.dumps(metrics) if metrics is not None else None
+        params_json = json.dumps(params) if params is not None else None
+
+        with psycopg2.connect(dsn) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(create_sql)
+                cursor.execute(insert_sql, (
+                    test_id,
+                    iteration_no,
+                    model_name,
+                    train_data_size,
+                    N,
+                    T,
+                    I,
+                    metrics_json,
+                    params_json,
+                    run_by,
+                    notes
+                ))
+                inserted = cursor.fetchone()
+            conn.commit()
+
+        return inserted[0] if inserted else None
+
+    @staticmethod
     def get_next_test_id():
         """Return next numeric test_id as int (max existing numeric test_id + 1).
 
@@ -450,6 +519,105 @@ class database:
                 cursor.execute(query)
                 result = cursor.fetchone()
                 return result[0] if result else 0
+
+    @staticmethod
+    def ensure_test_table():
+        """Create `test_data` table to store the fixed test set copied from `pool`."""
+        create_sql = """
+        CREATE TABLE IF NOT EXISTS test_data (
+            pool_id INTEGER PRIMARY KEY,
+            description TEXT,
+            is_labelled TEXT,
+            label TEXT,
+            model_prediction TEXT,
+            uncertainty_score DOUBLE PRECISION,
+            moved_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+        );
+        """
+        with database.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(create_sql)
+            conn.commit()
+
+    @staticmethod
+    def split_pool_to_test(fraction=0.2, seed=42):
+        """Randomly split `pool` and move `fraction` portion into `test_data`.
+
+        Returns dict with keys `moved_count` and `moved_ids`.
+        """
+        import random
+
+        database.ensure_test_table()
+
+        with database.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # get eligible ids
+                cursor.execute("SELECT id FROM pool WHERE description IS NOT NULL")
+                rows = cursor.fetchall()
+                ids = [r[0] for r in rows]
+                total = len(ids)
+                k = int(total * fraction)
+                if k <= 0:
+                    return {"moved_count": 0, "moved_ids": []}
+
+                random.seed(seed)
+                selected = random.sample(ids, k)
+
+                placeholders = ','.join(['%s'] * len(selected))
+
+                insert_sql = f"""
+                INSERT INTO test_data (pool_id, description, is_labelled, label, model_prediction, uncertainty_score)
+                SELECT id, description, is_labelled, label, model_prediction, uncertainty_score
+                FROM pool
+                WHERE id IN ({placeholders});
+                """
+                cursor.execute(insert_sql, tuple(selected))
+
+                delete_sql = f"DELETE FROM pool WHERE id IN ({placeholders});"
+                cursor.execute(delete_sql, tuple(selected))
+
+            conn.commit()
+
+        return {"moved_count": len(selected), "moved_ids": selected}
+
+    @staticmethod
+    def get_test_samples(limit=None, offset=0):
+        """Return test samples as tuples in the same format as pool selections:
+        (pool_id, description, is_labelled, label, model_prediction, uncertainty_score)
+        """
+        database.ensure_test_table()
+        if limit is None:
+            query = "SELECT pool_id, description, is_labelled, label, model_prediction, uncertainty_score FROM test_data ORDER BY pool_id OFFSET %s;"
+            params = (offset,)
+        else:
+            query = "SELECT pool_id, description, is_labelled, label, model_prediction, uncertainty_score FROM test_data ORDER BY pool_id LIMIT %s OFFSET %s;"
+            params = (limit, offset)
+
+        with database.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, params)
+                return cursor.fetchall()
+
+    @staticmethod
+    def reset_pool(clear_labels=True, clear_predictions=True):
+        """Reset pool state for a fresh run.
+
+        - If `clear_labels` True: set `label` = NULL and `is_labelled` = 'FALSE'
+        - If `clear_predictions` True: set `model_prediction` = NULL and `uncertainty_score` = NULL
+
+        Returns dict with counts of affected rows.
+        """
+        counts = {"labels_cleared": 0, "predictions_cleared": 0}
+        with database.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                if clear_labels:
+                    cursor.execute("UPDATE pool SET label = NULL, is_labelled = 'FALSE' WHERE description IS NOT NULL;")
+                    counts["labels_cleared"] = cursor.rowcount
+                if clear_predictions:
+                    cursor.execute("UPDATE pool SET model_prediction = NULL, uncertainty_score = NULL WHERE model_prediction IS NOT NULL OR uncertainty_score IS NOT NULL;")
+                    counts["predictions_cleared"] = cursor.rowcount
+            conn.commit()
+        return counts
 
 
 if __name__ == '__main__':
