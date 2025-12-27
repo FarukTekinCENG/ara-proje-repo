@@ -16,6 +16,19 @@ class ActiveLearning:
         "I": 0.001,     # improvement threshold
         "T": 0.3        # model prediction certainty threshold
     }
+    BASE_DIR = "./base_classifier"
+    RUNS_BASE = "./tests"
+    TRAINED_BASE = "./trained_models"
+
+    @staticmethod
+    def get_next_model_folder(base_path=None):
+        base_path = base_path or ActiveLearning.TRAINED_BASE
+        os.makedirs(base_path, exist_ok=True)
+        existing = sorted([d for d in os.listdir(base_path) if d.startswith("model")])
+        if not existing:
+            return os.path.join(base_path, "model1")
+        last_num = int(existing[-1][5:])
+        return os.path.join(base_path, f"model{last_num + 1}")
 
     @staticmethod
     def get_next_test_folder(base_path="./tests"):
@@ -46,8 +59,10 @@ class ActiveLearning:
 
 
     @staticmethod
-    def model_predict(max_samples=None):
-        predictor = ModelPredictor("./fine_tuned_eurobert")
+    def model_predict(max_samples=None, model_dir=None):
+        # Predict with the provided model_dir, falling back to BASE_DIR
+        model_dir = model_dir or ActiveLearning.BASE_DIR
+        predictor = ModelPredictor(model_dir)
 
         batch_size = 1000
         total_processed = 0
@@ -94,12 +109,13 @@ class ActiveLearning:
         return samples
 
     @staticmethod
-    def train_iterate(samples, previous_trainer=None):
+    def train_iterate(samples, source_model_dir=None, save_dir=None, previous_trainer=None):
         trainer = JobClassifierTrainer()
 
-        # tokenizer + model her zaman hazır
-        if os.path.exists("./fine_tuned_eurobert"):
-            trainer.load_model("./fine_tuned_eurobert")
+        # Load tokenizer/model from given source_model_dir (or base)
+        source_model_dir = source_model_dir or ActiveLearning.BASE_DIR
+        if os.path.exists(source_model_dir):
+            trainer.load_model(source_model_dir)
         else:
             trainer.initialize_model()
 
@@ -112,10 +128,12 @@ class ActiveLearning:
         )
 
         trained_trainer = trainer.train(train_ds, None)
-        trainer.save_model("./fine_tuned_eurobert", trained_trainer)
 
-        # Return both the JobClassifierTrainer instance (holds tokenizer/label encoder/model)
-        # and the underlying Trainer object
+        # Save into provided save_dir (create if missing). If not provided, fallback to ./fine_tuned_eurobert
+        save_dir = save_dir or "./fine_tuned_eurobert"
+        os.makedirs(save_dir, exist_ok=True)
+        trainer.save_model(save_dir, trained_trainer)
+
         return trainer, trained_trainer
 
     @staticmethod
@@ -142,16 +160,31 @@ class ActiveLearning:
 
     @staticmethod
     def run(function_algorithm, max_samples=None, test_samples=None):
-        # Test klasörünü otomatik oluştur
-        test_folder = ActiveLearning.get_next_test_folder()
+        # Ensure base classifier exists
+        os.makedirs(ActiveLearning.RUNS_BASE, exist_ok=True)
+        if not os.path.exists(ActiveLearning.BASE_DIR):
+            print("Base classifier not found. Creating base classifier...")
+            base_trainer = JobClassifierTrainer()
+            base_trainer.initialize_model()
+            base_trainer.save_model(ActiveLearning.BASE_DIR)
+
+        # Create a single test run folder for this run
+        test_folder = ActiveLearning.get_next_test_folder(base_path=ActiveLearning.RUNS_BASE)
         os.makedirs(test_folder, exist_ok=True)
+
+        # Create a model folder for this run under trained_models (one per run)
+        run_model_dir = ActiveLearning.get_next_model_folder()
+        os.makedirs(run_model_dir, exist_ok=True)
+
+        # Set current model dir to base initially; subsequent iterations will use models saved in run_model_dir
+        current_model_dir = ActiveLearning.BASE_DIR
 
         iteration = 1
         previous_accuracy = None
 
         while True:
-            # 1. Model tahmini
-            ActiveLearning.model_predict(max_samples)
+            # 1. Model tahmini (use current_model_dir)
+            ActiveLearning.model_predict(max_samples, model_dir=current_model_dir)
 
             # 2. Uncertainty sampling ile seç
             selected_samples = function_algorithm()
@@ -160,7 +193,15 @@ class ActiveLearning:
             labeled_samples = ActiveLearning.prep_labels(selected_samples)
 
             # 3. Modeli eğit / güncelle
-            trainer_obj, trained_trainer = ActiveLearning.train_iterate(labeled_samples)
+            # Train and save into the run-specific model folder (overwrite each iteration)
+            trainer_obj, trained_trainer = ActiveLearning.train_iterate(
+                labeled_samples,
+                source_model_dir=current_model_dir,
+                save_dir=run_model_dir,
+            )
+
+            # After training, switch prediction to the latest model in run_model_dir
+            current_model_dir = run_model_dir
 
             # 4. Accuracy kontrolü
             new_accuracy = None
