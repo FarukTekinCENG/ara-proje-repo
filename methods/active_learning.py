@@ -103,16 +103,20 @@ class ActiveLearning:
         else:
             trainer.initialize_model()
 
+        # Use the incoming samples only for training (no internal split)
         train_ds, eval_ds = trainer.prepare_datasets_from_tuples(
             samples,
             description_index=1,
-            label_index=3
+            label_index=3,
+            split=False,
         )
 
-        trained_trainer = trainer.train(train_ds, eval_ds)
+        trained_trainer = trainer.train(train_ds, None)
         trainer.save_model("./fine_tuned_eurobert", trained_trainer)
 
-        return trained_trainer
+        # Return both the JobClassifierTrainer instance (holds tokenizer/label encoder/model)
+        # and the underlying Trainer object
+        return trainer, trained_trainer
 
     @staticmethod
     def check_stop_condition(test_folder):
@@ -137,7 +141,7 @@ class ActiveLearning:
         return database.diversity_sampling_selection(ActiveLearning.hyper_params["N"])
 
     @staticmethod
-    def run(function_algorithm, max_samples=None):
+    def run(function_algorithm, max_samples=None, test_samples=None):
         # Test klasörünü otomatik oluştur
         test_folder = ActiveLearning.get_next_test_folder()
         os.makedirs(test_folder, exist_ok=True)
@@ -156,10 +160,38 @@ class ActiveLearning:
             labeled_samples = ActiveLearning.prep_labels(selected_samples)
 
             # 3. Modeli eğit / güncelle
-            trained_trainer = ActiveLearning.train_iterate(labeled_samples)
+            trainer_obj, trained_trainer = ActiveLearning.train_iterate(labeled_samples)
 
             # 4. Accuracy kontrolü
-            new_accuracy = trained_trainer.evaluate().get("eval_accuracy", None)
+            new_accuracy = None
+
+            # If an external test set is provided, evaluate on it using the trained trainer object
+            if test_samples:
+                # Build test dataset using trainer's label encoder and tokenizer
+                descriptions = []
+                labels = []
+                for row in test_samples:
+                    if len(row) > 3 and row[1] and row[3] is not None:
+                        descriptions.append(str(row[1]))
+                        labels.append(str(row[3]))
+
+                if trainer_obj.label_encoder is not None and labels:
+                    try:
+                        encoded_labels = trainer_obj.label_encoder.transform(labels)
+                        from datasets import Dataset
+                        test_ds = Dataset.from_dict({
+                            "description": descriptions,
+                            "label": encoded_labels,
+                        })
+                        test_ds = test_ds.map(trainer_obj.tokenize_function, batched=True)
+                        test_ds.set_format(type="torch", columns=["input_ids", "attention_mask", "label"])
+
+                        metrics = trainer_obj.evaluate(test_ds)
+                        new_accuracy = metrics.get("eval_accuracy", None)
+                    except Exception:
+                        new_accuracy = None
+                else:
+                    new_accuracy = None
 
             # 5. Stop condition
             stop, reason = ActiveLearning.check_stop_condition(test_folder)
