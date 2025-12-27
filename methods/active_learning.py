@@ -15,7 +15,9 @@ class ActiveLearning:
     hyper_params = {
         "N": 5,         # number of samples selected each iteration
         "I": 0.001,     # improvement threshold
-        "T": 0.3        # model prediction certainty threshold
+        "T": 0.3,        # model prediction certainty threshold
+        "max_iterations": 20,  # maximum number of iterations
+        "succcess_rate_threshold": 0.8,  # desired accuracy to stop
     }
     BASE_DIR = "./base_classifier"
     RUNS_BASE = "./tests"
@@ -144,18 +146,59 @@ class ActiveLearning:
         return trainer, trained_trainer
 
     @staticmethod
-    def check_stop_condition(test_folder):
-        # Ortalama uncertainty üzerinden T threshold kontrolü
+    def check_stop_condition(test_folder, iteration, previous_accuracy=None, new_accuracy=None):
+        # Stop condition checks using multiple criteria:
+        # - avg uncertainty T threshold
+        # - maximum iterations
+        # - success rate threshold on external test set accuracy
+        # - minimal improvement I
         pool_scores = database.get_all_uncertainty_scores()
         if not pool_scores:
             return True, "pool_empty"
-        # Stringleri float'a çevir
+
+        # convert to floats and compute average uncertainty
         pool_scores = [float(x) for x in pool_scores]
-        avg_score = sum(pool_scores)/len(pool_scores)
-        if avg_score < ActiveLearning.hyper_params["T"]:
+        avg_score = sum(pool_scores) / len(pool_scores)
+        if avg_score < ActiveLearning.hyper_params.get("T", 0.0):
             return True, "T_threshold_reached"
+
+        # max iterations
+        max_it = ActiveLearning.hyper_params.get("max_iterations")
+        if max_it is not None and iteration is not None and iteration >= max_it:
+            return True, "max_iterations_reached"
+
+        # success rate threshold based on external test accuracy
+        sr = ActiveLearning.hyper_params.get("succcess_rate_threshold")
+        if new_accuracy is not None and sr is not None and new_accuracy >= sr:
+            return True, "success_rate_reached"
+
+        # improvement threshold I
+        I = ActiveLearning.hyper_params.get("I")
+        if previous_accuracy is not None and new_accuracy is not None and I is not None:
+            try:
+                diff=(new_accuracy - previous_accuracy)
+                if diff > 0 and diff < I:
+                    return True, "improvement_below_I"
+            except Exception:
+                pass
+
         return False, None
 
+    @staticmethod
+    def random_sampling():
+        N = ActiveLearning.hyper_params.get("N", 5)
+        query = """
+            SELECT id, description, is_labelled, label, model_prediction, uncertainty_score
+            FROM pool
+                        WHERE is_labelled = 'FALSE'
+                            AND description IS NOT NULL
+            ORDER BY RANDOM()
+            LIMIT %s;
+        """
+        with database.get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (N,))
+                return cur.fetchall()
 
     @staticmethod
     def uncertainty_sampling():
@@ -399,8 +442,8 @@ class ActiveLearning:
                 except Exception:
                     new_accuracy = None
 
-            # 5. Stop condition
-            stop, reason = ActiveLearning.check_stop_condition(test_folder)
+            # 5. Stop condition (use iteration and accuracy if available)
+            stop, reason = ActiveLearning.check_stop_condition(test_folder, iteration, previous_accuracy, new_accuracy)
 
             # 6. Sonuçları CSV’ye yaz
             result_file = ActiveLearning.get_next_result_file(test_folder)
@@ -478,4 +521,16 @@ class ActiveLearning:
                 break
 
 if __name__ == '__main__':
-    ActiveLearning.run(ActiveLearning.uncertainty_sampling, max_samples=50)
+    methods = [
+        ActiveLearning.random_sampling,
+        ActiveLearning.uncertainty_sampling,
+        ActiveLearning.diversity_sampling,
+        ActiveLearning.query_by_comitee,
+    ]
+
+    for m in methods:
+        print(f"\n=== Running method: {m.__name__} ===")
+        try:
+            ActiveLearning.run(m, max_samples=50, test_from_db=True)
+        except Exception as e:
+            print(f"Error running {m.__name__}: {e}")
