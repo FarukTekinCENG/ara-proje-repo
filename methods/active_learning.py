@@ -179,6 +179,14 @@ class ActiveLearning:
         # Set current model dir to base initially; subsequent iterations will use models saved in run_model_dir
         current_model_dir = ActiveLearning.BASE_DIR
 
+        # determine test id for this run (numeric incremental)
+        try:
+            test_id_num = database.get_next_test_id()
+        except Exception:
+            test_id_num = 1
+
+        test_id = str(test_id_num)
+
         iteration = 1
         previous_accuracy = None
 
@@ -233,6 +241,31 @@ class ActiveLearning:
                     "stop_reason": reason
                 })
 
+            # 7. Save result to Postgres via insert_test_result
+            try:
+                metrics = {"accuracy": new_accuracy} if new_accuracy is not None else None
+                params = {
+                    "run_model_dir": run_model_dir,
+                    "test_folder": test_folder,
+                    "previous_accuracy": previous_accuracy,
+                }
+                inserted_id = database.insert_test_result(
+                    test_id=test_id,
+                    iteration_no=iteration,
+                    model_name=getattr(trainer_obj, "model_name", None) or "unknown",
+                    train_data_size=len(labeled_samples) if labeled_samples else 0,
+                    N=ActiveLearning.hyper_params.get("N"),
+                    T=ActiveLearning.hyper_params.get("T"),
+                    I=ActiveLearning.hyper_params.get("I"),
+                    metrics=metrics,
+                    params=params,
+                    run_by=os.getenv("USER") or os.getenv("USERNAME"),
+                    notes=reason,
+                )
+                print(f"Inserted result row id={inserted_id} for test_id={test_id} iteration={iteration}")
+            except Exception as e:
+                print(f"Warning: failed to insert result row to DB: {e}")
+
             print(f"Iteration {iteration} results saved to {result_file}")
             iteration += 1
             previous_accuracy = new_accuracy
@@ -243,4 +276,3 @@ class ActiveLearning:
 
 if __name__ == '__main__':
     ActiveLearning.run(ActiveLearning.uncertainty_sampling, max_samples=50)
-

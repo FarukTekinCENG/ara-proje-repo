@@ -161,6 +161,25 @@ class database:
             conn.commit()
 
         return inserted[0] if inserted else None
+
+    @staticmethod
+    def get_next_test_id():
+        """Return next numeric test_id as int (max existing numeric test_id + 1).
+
+        Looks only at numeric `test_id` values in `results`. Returns 1 if none.
+        """
+        database.ensure_results_table()
+        query = """
+        SELECT MAX(CAST(test_id AS INTEGER))
+        FROM results
+        WHERE test_id ~ '^[0-9]+$';
+        """
+        with database.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query)
+                row = cursor.fetchone()
+        max_id = row[0] if row and row[0] is not None else 0
+        return int(max_id) + 1
     
     @staticmethod
     def run_query(selection=1):
