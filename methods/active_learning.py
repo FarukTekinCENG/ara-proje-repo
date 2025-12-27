@@ -196,6 +196,9 @@ class ActiveLearning:
 
         iteration = 1
         previous_accuracy = None
+        # Record active-learning method name and DATA_SIZE
+        method_name = function_algorithm.__name__ if callable(function_algorithm) else str(function_algorithm)
+        data_size = max_samples  # DATA_SIZE == max_samples per user instruction
 
         # If requested, load fixed test set from DB once (will be used for all iterations)
         if test_from_db:
@@ -264,6 +267,8 @@ class ActiveLearning:
                     "run_model_dir": run_model_dir,
                     "test_folder": test_folder,
                     "previous_accuracy": previous_accuracy,
+                    "method": method_name,
+                    "DATA_SIZE": data_size,
                 }
 
                 try:
@@ -273,6 +278,8 @@ class ActiveLearning:
                         iteration_no=iteration,
                         model_name=getattr(trainer_obj, "model_name", None) or "unknown",
                         train_data_size=len(labeled_samples) if labeled_samples else 0,
+                        method=method_name,
+                        data_size=data_size,
                         N=ActiveLearning.hyper_params.get("N"),
                         T=ActiveLearning.hyper_params.get("T"),
                         I=ActiveLearning.hyper_params.get("I"),
@@ -290,6 +297,8 @@ class ActiveLearning:
                         iteration_no=iteration,
                         model_name=getattr(trainer_obj, "model_name", None) or "unknown",
                         train_data_size=len(labeled_samples) if labeled_samples else 0,
+                        method=method_name,
+                        data_size=data_size,
                         N=ActiveLearning.hyper_params.get("N"),
                         T=ActiveLearning.hyper_params.get("T"),
                         I=ActiveLearning.hyper_params.get("I"),

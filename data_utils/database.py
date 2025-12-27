@@ -93,6 +93,8 @@ class database:
             iteration_no INTEGER,
             model_name TEXT,
             train_data_size INTEGER,
+            method TEXT,
+            data_size INTEGER,
             n INTEGER,
             t INTEGER,
             i INTEGER,
@@ -114,6 +116,8 @@ class database:
                            iteration_no: int,
                            model_name: str,
                            train_data_size: int,
+                           method: str = None,
+                           data_size: int = None,
                            N: int = None,
                            T: int = None,
                            I: int = None,
@@ -134,8 +138,8 @@ class database:
         database.ensure_results_table()
 
         insert_sql = """
-        INSERT INTO results (test_id, iteration_no, model_name, train_data_size, n, t, i, metrics, params, run_by, notes)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO results (test_id, iteration_no, model_name, train_data_size, method, data_size, n, t, i, metrics, params, run_by, notes)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id;
         """
 
@@ -149,6 +153,8 @@ class database:
                     iteration_no,
                     model_name,
                     train_data_size,
+                    method,
+                    data_size,
                     N,
                     T,
                     I,
@@ -167,6 +173,8 @@ class database:
                                   iteration_no: int,
                                   model_name: str,
                                   train_data_size: int,
+                                  method: str = None,
+                                  data_size: int = None,
                                   N: int = None,
                                   T: int = None,
                                   I: int = None,
@@ -190,6 +198,8 @@ class database:
             iteration_no INTEGER,
             model_name TEXT,
             train_data_size INTEGER,
+            method TEXT,
+            data_size INTEGER,
             n INTEGER,
             t INTEGER,
             i INTEGER,
@@ -202,8 +212,8 @@ class database:
         """
 
         insert_sql = """
-        INSERT INTO results (test_id, iteration_no, model_name, train_data_size, n, t, i, metrics, params, run_by, notes)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO results (test_id, iteration_no, model_name, train_data_size, method, data_size, n, t, i, metrics, params, run_by, notes)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id;
         """
 
@@ -218,6 +228,8 @@ class database:
                     iteration_no,
                     model_name,
                     train_data_size,
+                    method,
+                    data_size,
                     N,
                     T,
                     I,
