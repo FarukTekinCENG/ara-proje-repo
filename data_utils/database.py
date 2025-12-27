@@ -1,6 +1,7 @@
 import psycopg2
 import os
 import sys
+import json
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -67,6 +68,99 @@ class database:
             password=os.getenv("DB_PASSWORD"),
             port=os.getenv("DB_PORT", "5432")
         )
+    
+    @staticmethod
+    def ensure_results_table():
+        """Create a `results` table to store model test runs.
+
+        Columns:
+        - id: serial primary key
+        - test_id: identifier for the test run (string)
+        - iteration_no: iteration number
+        - model_name: model identifier
+        - train_data_size: number of training samples
+        - n, t, i: hyperparameters N, T, I (nullable integers)
+        - metrics: JSONB field to store evaluation metrics (accuracy, f1, etc.)
+        - params: JSONB field to store other params (DATA_SIZE, etc.)
+        - run_by: user or script that ran the test
+        - notes: free text notes
+        - created_at: timestamp
+        """
+        create_sql = """
+        CREATE TABLE IF NOT EXISTS results (
+            id SERIAL PRIMARY KEY,
+            test_id TEXT,
+            iteration_no INTEGER,
+            model_name TEXT,
+            train_data_size INTEGER,
+            n INTEGER,
+            t INTEGER,
+            i INTEGER,
+            metrics JSONB,
+            params JSONB,
+            run_by TEXT,
+            notes TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+        );
+        """
+
+        with database.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(create_sql)
+            conn.commit()
+
+    @staticmethod
+    def insert_test_result(test_id: str,
+                           iteration_no: int,
+                           model_name: str,
+                           train_data_size: int,
+                           N: int = None,
+                           T: int = None,
+                           I: int = None,
+                           metrics: dict = None,
+                           params: dict = None,
+                           run_by: str = None,
+                           notes: str = None):
+        """Insert a test result row into `results` table and return inserted id.
+
+        Example:
+            database.insert_test_result(
+                test_id='exp-1', iteration_no=0, model_name='eurobert',
+                train_data_size=1000, N=100, T=10, I=5,
+                metrics={'accuracy':0.92}, params={'DATA_SIZE':1000}, run_by='script'
+            )
+        """
+        # ensure table exists
+        database.ensure_results_table()
+
+        insert_sql = """
+        INSERT INTO results (test_id, iteration_no, model_name, train_data_size, n, t, i, metrics, params, run_by, notes)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id;
+        """
+
+        metrics_json = json.dumps(metrics) if metrics is not None else None
+        params_json = json.dumps(params) if params is not None else None
+
+        with database.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(insert_sql, (
+                    test_id,
+                    iteration_no,
+                    model_name,
+                    train_data_size,
+                    N,
+                    T,
+                    I,
+                    metrics_json,
+                    params_json,
+                    run_by,
+                    notes
+                ))
+                inserted = cursor.fetchone()
+            conn.commit()
+
+        return inserted[0] if inserted else None
     
     @staticmethod
     def run_query(selection=1):

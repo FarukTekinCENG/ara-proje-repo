@@ -4,6 +4,7 @@
 venv/
 build/
 __pycache__/
+__pycache__
 fine_tuned_eurobert/
 results/
 tests/
