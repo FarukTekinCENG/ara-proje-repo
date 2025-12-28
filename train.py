@@ -1,29 +1,48 @@
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-from transformers import Trainer, TrainingArguments
-from datasets import Dataset
-from sklearn.metrics import accuracy_score
-from sklearn.preprocessing import LabelEncoder
 import torch
 import os
 import joblib
-
-from data_utils.database import database
+import numpy as np
+from sklearn.preprocessing import LabelEncoder
+from datasets import Dataset
+from transformers import (
+    AutoTokenizer,
+    AutoModelForSequenceClassification,
+    Trainer,
+    TrainingArguments,
+)
+from sklearn.metrics import accuracy_score
 
 
 class JobClassifierTrainer:
     model_name = "EuroBERT/EuroBERT-210m"
-    num_labels = 7
+
+    # 🔒 SABİT LABEL UZAYI (ASLA DEĞİŞMEZ)
+    ALL_LABELS = [
+        "Full-time",
+        "Part-time",
+        "Contract",
+        "Internship",
+        "Temporary",
+        "Freelance",
+        "Other",
+    ]
+
+    num_labels = len(ALL_LABELS)
 
     def __init__(self):
         self.tokenizer = None
         self.model = None
         self.label_encoder = None
 
+    # --------------------------------------------------
+    # MODEL + TOKENIZER + LABEL ENCODER INIT
+    # --------------------------------------------------
     def initialize_model(self):
         if self.tokenizer is None:
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name,
-                trust_remote_code=True
+                trust_remote_code=True,
+                fix_mistral_regex=True
             )
 
         if self.model is None:
@@ -33,11 +52,20 @@ class JobClassifierTrainer:
                 trust_remote_code=True
             )
 
-    def load_model(self, model_dir="./fine_tuned_eurobert"):
+        # 🔒 LABEL ENCODER SADECE BURADA FIT EDİLİR
+        if self.label_encoder is None:
+            self.label_encoder = LabelEncoder()
+            self.label_encoder.fit(self.ALL_LABELS)
+
+    # --------------------------------------------------
+    # LOAD MODEL
+    # --------------------------------------------------
+    def load_model(self, model_dir="./base_classifier"):
         if os.path.exists(model_dir):
             self.tokenizer = AutoTokenizer.from_pretrained(
                 model_dir,
-                trust_remote_code=True
+                trust_remote_code=True,
+                fix_mistral_regex=True
             )
             self.model = AutoModelForSequenceClassification.from_pretrained(
                 model_dir,
@@ -47,118 +75,25 @@ class JobClassifierTrainer:
             le_path = os.path.join(model_dir, "label_encoder.joblib")
             if os.path.exists(le_path):
                 self.label_encoder = joblib.load(le_path)
+            else:
+                # 🔒 ASLA yeniden fit etme
+                self.label_encoder = LabelEncoder()
+                self.label_encoder.fit(self.ALL_LABELS)
 
             print(f"Model loaded from {model_dir}")
         else:
-            print("No saved model found, initializing from base model")
+            print("Base classifier not found. Creating base classifier...")
             self.initialize_model()
+            self.save_model(model_dir)
 
-    @staticmethod
-    def compute_metrics(p):
-        preds = p.predictions.argmax(-1)
-        return {"accuracy": accuracy_score(p.label_ids, preds)}
-
-    def tokenize_function(self, examples):
-        return self.tokenizer(
-            examples["description"],
-            truncation=True,
-            padding="max_length",
-            max_length=256,
-        )
-
-    def prepare_datasets_from_tuples(
-        self,
-        tuple_list,
-        description_index=1,
-        label_index=3,
-        test_size=0.2,
-        seed=42,
-        split=True  # ESKİSİ GİBİ split=True, ama opsiyonel
-    ):
-        descriptions = []
-        labels = []
-
-        for row in tuple_list:
-            if len(row) <= max(description_index, label_index):
-                continue
-
-            desc = row[description_index]
-            label = row[label_index]
-
-            # ESKİ KOD: Hem desc hem label gerekiyor
-            if desc and label:
-                descriptions.append(str(desc))
-                labels.append(str(label))
-
-        if not descriptions:
-            raise ValueError(f"No valid descriptions found in tuple list. First tuple: {tuple_list[0] if tuple_list else 'Empty list'}")
-
-        # ESKİ KOD: Her zaman label encoder'ı fit et
-        self.label_encoder = LabelEncoder()
-        encoded_labels = self.label_encoder.fit_transform(labels)
-        print(f"Label encoder fitted. Classes: {self.label_encoder.classes_}")
-        print(f"Number of samples: {len(descriptions)}")
-
-        dataset = Dataset.from_dict(
-            {
-                "description": descriptions,
-                "label": encoded_labels,
-            }
-        )
-
-        dataset = dataset.map(self.tokenize_function, batched=True)
-        dataset.set_format(
-            type="torch",
-            columns=["input_ids", "attention_mask", "label"],
-        )
-        
-        if split:
-            split_ds = dataset.train_test_split(test_size=test_size, seed=seed)
-            return split_ds["train"], split_ds["test"]
-        else:
-            return dataset, None
-
-    def train(self, train_dataset, eval_dataset):
-        if self.model is None:
-            self.initialize_model()
-
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f">> Training on {device}")
-
-        self.model.to(device)
-
-        # Eval dataset yoksa evaluation'ı kapat
-        eval_strategy = "epoch" if eval_dataset is not None else "no"
-
-        training_args = TrainingArguments(
-            output_dir="./results",
-            eval_strategy=eval_strategy,
-            learning_rate=2e-5,
-            per_device_train_batch_size=2,
-            per_device_eval_batch_size=2,
-            gradient_accumulation_steps=8,
-            num_train_epochs=1,
-            weight_decay=0.01,
-            remove_unused_columns=False,
-            report_to="none",
-        )
-
-        trainer = Trainer(
-            model=self.model,
-            args=training_args,
-            train_dataset=train_dataset,
-            eval_dataset=eval_dataset,
-            tokenizer=self.tokenizer,
-            compute_metrics=self.compute_metrics,
-        )
-
-        trainer.train()
-        return trainer
-
-    def save_model(self, output_dir="./fine_tuned_eurobert", trainer=None):
+    # --------------------------------------------------
+    # SAVE MODEL
+    # --------------------------------------------------
+    def save_model(self, output_dir, trainer=None):
         os.makedirs(output_dir, exist_ok=True)
 
-        if trainer:
+        # Eğer HF Trainer verildiyse onu kullan
+        if trainer is not None:
             trainer.save_model(output_dir)
         else:
             self.model.save_pretrained(output_dir)
@@ -173,51 +108,208 @@ class JobClassifierTrainer:
 
         print(f"Model saved to {output_dir}")
 
-    def evaluate(self, eval_dataset):
-        """Evaluate the model on given dataset and return metrics"""
+    # --------------------------------------------------
+    # TOKENIZATION
+    # --------------------------------------------------
+    def tokenize_function(self, examples):
+        return self.tokenizer(
+            examples["description"],
+            truncation=True,
+            padding="max_length",
+            max_length=256,
+        )
+
+    # --------------------------------------------------
+    # DATASET PREPARATION (NO FIT HERE ❌)
+    # --------------------------------------------------
+    # def prepare_datasets_from_tuples(
+    #     self,
+    #     tuple_list,
+    #     description_index=1,
+    #     label_index=3,
+    #     test_size=0.2,
+    #     seed=42,
+    #     split=True,
+    # ):
+    #     if self.label_encoder is None:
+    #         raise RuntimeError(
+    #             "LabelEncoder not initialized. "
+    #             "It must be fitted once during base model initialization."
+    #         )
+
+    #     descriptions = []
+    #     labels = []
+
+    #     for row in tuple_list:
+    #         if len(row) <= max(description_index, label_index):
+    #             continue
+
+    #         desc = row[description_index]
+    #         label = row[label_index]
+
+    #         if desc and label:
+    #             descriptions.append(str(desc))
+    #             labels.append(str(label))
+
+    #     if not descriptions:
+    #         raise ValueError("No valid samples found for training.")
+
+    #     # 🔒 SADECE TRANSFORM
+    #     encoded_labels = self.label_encoder.transform(labels)
+
+    #     print(f"Label encoder classes (fixed): {self.label_encoder.classes_}")
+    #     print(f"Number of samples: {len(descriptions)}")
+
+    #     dataset = Dataset.from_dict(
+    #         {
+    #             "description": descriptions,
+    #             "label": encoded_labels,
+    #         }
+    #     )
+
+    #     dataset = dataset.map(self.tokenize_function, batched=True)
+    #     dataset.set_format(
+    #         type="torch",
+    #         columns=["input_ids", "attention_mask", "label"],
+    #     )
+
+    #     if split:
+    #         split_ds = dataset.train_test_split(
+    #             test_size=test_size, seed=seed
+    #         )
+    #         return split_ds["train"], split_ds["test"]
+
+    #     return dataset, None
+    def prepare_datasets_from_tuples(
+        self,
+        tuple_list,
+        description_index=1,
+        label_index=3,
+        test_size=0.2,
+        seed=42,
+        split=True,
+    ):
+        if self.label_encoder is None:
+            raise RuntimeError(
+                "LabelEncoder not initialized. "
+                "It must be fitted once during base model initialization."
+            )
+
+        descriptions = []
+        labels = []
+
+        skipped_samples = 0
+        skipped_label_counter = {}
+
+        valid_label_set = set(self.label_encoder.classes_)
+
+        for row in tuple_list:
+            if len(row) <= max(description_index, label_index):
+                continue
+
+            desc = row[description_index]
+            label = row[label_index]
+
+            if not desc or not label:
+                skipped_samples += 1
+                continue
+
+            label = str(label)
+
+            # ❌ BİREBİR EŞLEŞME YOKSA AT
+            if label not in valid_label_set:
+                skipped_samples += 1
+                skipped_label_counter[label] = (
+                    skipped_label_counter.get(label, 0) + 1
+                )
+                continue
+
+            descriptions.append(str(desc))
+            labels.append(label)
+
+        # 🚨 UYARI SİNYALİ
+        if skipped_samples > 0:
+            print(
+                f"⚠️ WARNING: {skipped_samples} samples skipped due to unknown labels."
+            )
+            for lbl, cnt in skipped_label_counter.items():
+                print(f"   - '{lbl}': {cnt} samples ignored")
+
+        if not descriptions:
+            raise ValueError(
+                "No valid samples left after label filtering. "
+                "Check label consistency."
+            )
+
+        # ✅ SADECE GÜVENLİ TRANSFORM
+        encoded_labels = self.label_encoder.transform(labels)
+
+        print(f"Label encoder classes (fixed): {self.label_encoder.classes_}")
+        print(f"Number of samples used for training: {len(descriptions)}")
+
+        dataset = Dataset.from_dict(
+            {
+                "description": descriptions,
+                "label": encoded_labels,
+            }
+        )
+
+        dataset = dataset.map(self.tokenize_function, batched=True)
+        dataset.set_format(
+            type="torch",
+            columns=["input_ids", "attention_mask", "label"],
+        )
+
+        if split:
+            split_ds = dataset.train_test_split(
+                test_size=test_size, seed=seed
+            )
+            return split_ds["train"], split_ds["test"]
+
+        return dataset, None
+
+
+    # --------------------------------------------------
+    # TRAIN
+    # --------------------------------------------------
+    def train(self, train_dataset, eval_dataset):
         if self.model is None:
-            raise ValueError("Model not initialized. Call load_model() or initialize_model() first.")
-        
+            self.initialize_model()
+
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f">> Training on {device}")
         self.model.to(device)
-        
-        # Create trainer for evaluation
+
+        # ⚠️ evaluation_strategy / save_strategy YOK
         training_args = TrainingArguments(
-            output_dir="./temp_eval",
-            eval_strategy="no",
-            per_device_eval_batch_size=16,
+            output_dir="./results",
+            per_device_train_batch_size=2,
+            per_device_eval_batch_size=2,
+            gradient_accumulation_steps=8,
+            num_train_epochs=3,                         # 1 AZ > 3-5 OLMALI
+            learning_rate=2e-5,
+            weight_decay=0.01,
+            logging_steps=50,
             remove_unused_columns=False,
             report_to="none",
-            fp16=False,
         )
-        
+
         trainer = Trainer(
             model=self.model,
             args=training_args,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,  # None olabilir, sorun yok
             tokenizer=self.tokenizer,
-            compute_metrics=self.compute_metrics,
+            compute_metrics=self.compute_metrics if eval_dataset is not None else None,
         )
-        
-        # Evaluate
-        eval_result = trainer.evaluate(eval_dataset)
-        return eval_result
 
+        trainer.train()
+        return trainer
 
-if __name__ == "__main__":
-    samples = database.get_unlabelled_samples(100, 0)
-
-    if not samples:
-        print("Boş veri geldi")
-        exit(1)
-
-    trainer = JobClassifierTrainer()
-    trainer.load_model("./fine_tuned_eurobert")
-
-    train_ds, eval_ds = trainer.prepare_datasets_from_tuples(
-        samples,
-        description_index=1,
-        label_index=3,
-    )
-
-    trained_trainer = trainer.train(train_ds, eval_ds)
-    trainer.save_model("./fine_tuned_eurobert", trained_trainer)
+    @staticmethod
+    def compute_metrics(eval_pred):
+        logits, labels = eval_pred
+        predictions = np.argmax(logits, axis=-1)
+        return {
+            "accuracy": accuracy_score(labels, predictions)
+        }

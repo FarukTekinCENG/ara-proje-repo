@@ -6,6 +6,9 @@ build/
 __pycache__/
 __pycache__
 fine_tuned_eurobert/
+trained_models/
+base_classifier/
+tmp_eval/
 results/
 tests/
 *.jsonl

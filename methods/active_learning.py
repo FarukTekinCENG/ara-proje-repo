@@ -15,18 +15,17 @@ import shutil
 
 class ActiveLearning:
     hyper_params = {
-        "N": 5,         # number of samples selected each iteration
+        "N": 30,         # number of samples selected each iteration
         "I": 0.001,     # improvement threshold
-        "T": 0.3,        # model prediction certainty threshold
+        "T": 0.1,        # model prediction certainty threshold
         "max_iterations": 20,  # maximum number of iterations
-        "succcess_rate_threshold": 0.8,  # desired accuracy to stop
+        "succcess_rate_threshold": 0.9,  # desired accuracy to stop
     }
     BASE_DIR = "./base_classifier"
     RUNS_BASE = "./tests"
     TRAINED_BASE = "./trained_models"
     # Committee models (HF hub ids or local paths). Update to use desired models.
     model_list = [
-        "EuroBERT/EuroBERT-210m",
         "FacebookAI/roberta-base",
         "google-bert/bert-base-cased",
     ]
@@ -50,7 +49,6 @@ class ActiveLearning:
         last_num = int(existing[-1][4:])
         return os.path.join(base_path, f"test{last_num + 1}")
 
-
     @staticmethod
     def get_next_result_file(folder):
         os.makedirs(folder, exist_ok=True)
@@ -67,7 +65,6 @@ class ActiveLearning:
             return os.path.join(folder, "results_1.csv")
         last_num = max(nums)
         return os.path.join(folder, f"results_{last_num + 1}.csv")
-
 
     @staticmethod
     def model_predict(max_samples=None, model_dir=None):
@@ -106,44 +103,18 @@ class ActiveLearning:
                     predicted_class=result["predicted_class"],
                     uncertainty_score=uncertainty
                 )
-
+    
     @staticmethod
     def prep_labels(samples):
         print("Please label your suggested samples... (simulated)")
-        
-        if not samples:
-            print("Warning: No samples to label")
-            return []
-        
-        labeled_samples = []
-        
+
         for sample in samples:
             sample_id = sample[0]
-            description = sample[1]
-            
-            # Simulated labeling logic - assign a random label between 0-6 (7 classes)
-            import random
-            simulated_label = str(random.randint(0, 6))
-            
-            print(f"Sample {sample_id}: Simulated label = {simulated_label}")
-            
-            # DB'de güncelle
-            database.update_labelled_sample(sample_id, simulated_label)
-            
-            # Create a new tuple with the label at index 3
-            new_sample = list(sample)
-            if len(new_sample) > 3:
-                new_sample[3] = simulated_label
-            else:
-                # If tuple doesn't have label position, extend it
-                while len(new_sample) <= 3:
-                    new_sample.append(None)
-                new_sample[3] = simulated_label
-            
-            labeled_samples.append(tuple(new_sample))
-        
-        print(f"Simulated labeling complete. Labeled {len(labeled_samples)} samples.")
-        return labeled_samples
+            predicted_label = sample[3]  # ya da simüle edilmiş label
+            # DB’de güncelle
+            database.update_labelled_sample(sample_id, predicted_label)
+
+        return samples
 
     @staticmethod
     def train_iterate(samples, source_model_dir=None, save_dir=None, previous_trainer=None):
@@ -484,7 +455,7 @@ class ActiveLearning:
                     pass
 
     @staticmethod
-    def run(function_algorithm, max_samples=None, test_samples=None, test_sample_limit=1000, test_from_db=True):
+    def run(function_algorithm, max_samples=None, test_samples=None, test_sample_limit=300, test_from_db=True):
         # Ensure base classifier exists
         os.makedirs(ActiveLearning.RUNS_BASE, exist_ok=True)
         if not os.path.exists(ActiveLearning.BASE_DIR):
@@ -516,7 +487,7 @@ class ActiveLearning:
 
         # Reset pool for a fresh run (clear labels and model predictions)
         try:
-            reset_res = database.reset_pool(clear_labels=True, clear_predictions=True)
+            reset_res = database.reset_pool(clear_labels=False, clear_predictions=True)
             print(f"Pool reset: {reset_res}")
         except Exception as e:
             print(f"Warning: failed to reset pool: {e}")
@@ -683,15 +654,15 @@ class ActiveLearning:
 
 if __name__ == '__main__':
     methods = [
-        ActiveLearning.random_sampling,
+        #ActiveLearning.random_sampling,
         ActiveLearning.uncertainty_sampling,
-        ActiveLearning.diversity_sampling,
+        #ActiveLearning.diversity_sampling,
         ActiveLearning.query_by_comitee,
     ]
 
     for m in methods:
         print(f"\n=== Running method: {m.__name__} ===")
         try:
-            ActiveLearning.run(m, max_samples=50, test_from_db=True)
+            ActiveLearning.run(m, max_samples=300, test_from_db=True)
         except Exception as e:
             print(f"Error running {m.__name__}: {e}")

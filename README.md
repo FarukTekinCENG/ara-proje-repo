@@ -7,5 +7,4 @@ DB_PASSWORD=
 under 'table_def/job_postings.sql'
 
 # split dataset train - test within db
-python scripts/split_pool.py --fraction 0.2 --seed 42
-python scripts/split_pool.py --fraction 0.2 --seed 42 --yes
+python -m scripts.split_pool --fraction 0.2 --seed 42 --yes
