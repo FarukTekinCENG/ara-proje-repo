@@ -113,7 +113,31 @@ class JobClassifierTrainer:
                 # If initialization fails, raise a clear error so caller can handle it.
                 raise RuntimeError("Failed to initialize tokenizer/model before tokenization")
 
-        dataset = dataset.map(self.tokenize_function, batched=True)
+        # Run tokenization with robust error reporting so we can debug missing columns.
+        try:
+            dataset = dataset.map(self.tokenize_function, batched=True)
+        except Exception as e:
+            print(f"[DEBUG] Tokenization failed inside dataset.map: {e}")
+            print(f"[DEBUG] tokenizer is None: {self.tokenizer is None}")
+            # Try running tokenize_function on a single example to see returned keys
+            try:
+                sample_ex = {"description": [descriptions[0]]} if descriptions else {"description": []}
+                sample_out = self.tokenize_function(sample_ex)
+                try:
+                    sample_keys = list(sample_out.keys())
+                except Exception:
+                    sample_keys = f"uninspectable sample_out type: {type(sample_out)}"
+                print(f"[DEBUG] sample tokenization output keys: {sample_keys}")
+            except Exception as e2:
+                print(f"[DEBUG] sample tokenize_function raised: {e2}")
+            raise
+        # Verify tokenized columns exist before setting format to avoid cryptic errors.
+        cols = list(dataset.column_names)
+        expected = ["input_ids", "attention_mask"]
+        missing = [c for c in expected if c not in cols]
+        if missing:
+            raise RuntimeError(f"Missing tokenized columns {missing}. Current columns: {cols}")
+
         dataset.set_format(
             type="torch",
             columns=["input_ids", "attention_mask", "label"],
