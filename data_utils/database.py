@@ -297,17 +297,30 @@ class database:
                 return cursor.fetchall()
 
     @staticmethod
-    def diversity_sampling_selection(N=100, embedding_model_name="sentence-transformers/all-MiniLM-L6-v2"):
+    def diversity_sampling_selection(N=100, embedding_model_name="sentence-transformers/all-MiniLM-L6-v2", max_samples=None):
         """
         Diversity sampling ile örnek seçer
         KMeans tabanlı kümeleme kullanır
+        
+        Args:
+            N: Seçilecek örnek sayısı
+            embedding_model_name: Embedding model adı
+            max_samples: Embedding oluşturulacak maksimum örnek sayısı (None ise tüm veri kullanılır)
         """
         import numpy as np
         from sentence_transformers import SentenceTransformer
         from sklearn.cluster import KMeans
         
-        # Etiketsiz örnekleri çek
-        samples = database.get_all_unlabelled_with_labels()
+        # Etiketsiz örnekleri çek - max_samples parametresi ile sınırlandır
+        if max_samples is not None:
+            # Sadece belirtilen kadar örnek çek
+            samples = database.get_unlabelled_with_labels(batch_size=max_samples, offset=0)
+            print(f"Diversity sampling: max_samples={max_samples} parametresi ile sınırlandırıldı.")
+        else:
+            # Tüm örnekleri çek (eski davranış)
+            samples = database.get_all_unlabelled_with_labels()
+            print(f"Diversity sampling: Tüm etiketsiz örnekler kullanılıyor (max_samples belirtilmedi).")
+        
         if not samples or len(samples) < N:
             # Eğer yeterli örnek yoksa, mevcut olanları döndür
             return samples[:N] if samples else []

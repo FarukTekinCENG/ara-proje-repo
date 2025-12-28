@@ -9,6 +9,9 @@ from train import JobClassifierTrainer
 from data_utils.database import database
 import re
 
+# ⚙️ CONFIG: Diversity sampling için max_samples değerini buradan değiştirin
+MAX_SAMPLES = 5000
+
 class ActiveLearning:
     hyper_params = {
         "N": 100,        # number of samples selected each iteration
@@ -109,8 +112,11 @@ class ActiveLearning:
             database.initialize_labeled_pool(initial_size=100, random_seed=42)
 
         while True:
-            # 1. Diversity sampling ile seç
-            selected_samples = database.diversity_sampling_selection(ActiveLearning.hyper_params["N"])
+            # 1. Diversity sampling ile seç (max_samples parametresi ile embedding oluşturmayı sınırlandır)
+            selected_samples = database.diversity_sampling_selection(
+                N=ActiveLearning.hyper_params["N"],
+                max_samples=max_samples
+            )
             
             if not selected_samples:
                 print("Seçilecek örnek kalmadı.")
@@ -153,5 +159,5 @@ class ActiveLearning:
                 break
 
 if __name__ == '__main__':
-    ActiveLearning.diversity_sampling(max_samples=5000)
+    ActiveLearning.diversity_sampling(max_samples=MAX_SAMPLES)
 

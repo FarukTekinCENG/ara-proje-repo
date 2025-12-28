@@ -13,6 +13,9 @@ from data_utils.database import database
 import re
 import shutil
 
+# ⚙️ CONFIG: Diversity sampling için max_samples değerini buradan değiştirin
+MAX_SAMPLES = 5000
+
 class ActiveLearning:
     hyper_params = {
         "N": 30,         # number of samples selected each iteration
@@ -517,6 +520,13 @@ class ActiveLearning:
         method_name = function_algorithm.__name__ if callable(function_algorithm) else str(function_algorithm)
         data_size = max_samples  # DATA_SIZE == max_samples per user instruction
 
+        # Eğer diversity_sampling ise, max_samples parametresini geçirmek için closure ile sarmala
+        if callable(function_algorithm) and function_algorithm.__name__ == "diversity_sampling":
+            function_algorithm = lambda: database.diversity_sampling_selection(
+                N=ActiveLearning.hyper_params["N"],
+                max_samples=max_samples
+            )
+
         # If requested, load fixed test set from DB once (will be used for all iterations)
         if test_from_db:
             try:
@@ -663,6 +673,6 @@ if __name__ == '__main__':
     for m in methods:
         print(f"\n=== Running method: {m.__name__} ===")
         try:
-            ActiveLearning.run(m, max_samples=300, test_from_db=True)
+            ActiveLearning.run(m, max_samples=MAX_SAMPLES, test_from_db=True)
         except Exception as e:
             print(f"Error running {m.__name__}: {e}")
