@@ -542,7 +542,7 @@ class database:
             is_labelled TEXT,
             label TEXT,
             model_prediction TEXT,
-            uncertainty_score DOUBLE PRECISION,
+            uncertainty_score TEXT,
             moved_at TIMESTAMP WITH TIME ZONE DEFAULT now()
         );
         """
