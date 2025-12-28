@@ -484,7 +484,7 @@ class ActiveLearning:
                     pass
 
     @staticmethod
-    def run(function_algorithm, max_samples=None, test_samples=None, test_from_db=True):
+    def run(function_algorithm, max_samples=None, test_samples=None, test_sample_limit=1000, test_from_db=True):
         # Ensure base classifier exists
         os.makedirs(ActiveLearning.RUNS_BASE, exist_ok=True)
         if not os.path.exists(ActiveLearning.BASE_DIR):
@@ -549,7 +549,7 @@ class ActiveLearning:
         # If requested, load fixed test set from DB once (will be used for all iterations)
         if test_from_db:
             try:
-                test_samples = database.get_test_samples()
+                test_samples = database.get_test_samples(test_sample_limit)
                 print(f"Loaded {len(test_samples)} test samples from DB")
             except Exception as e:
                 print(f"Warning: failed to load test samples from DB: {e}")
