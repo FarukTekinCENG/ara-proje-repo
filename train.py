@@ -105,6 +105,14 @@ class JobClassifierTrainer:
             }
         )
 
+        # Ensure tokenizer/model are initialized before tokenization step.
+        if self.tokenizer is None:
+            try:
+                self.initialize_model()
+            except Exception:
+                # If initialization fails, raise a clear error so caller can handle it.
+                raise RuntimeError("Failed to initialize tokenizer/model before tokenization")
+
         dataset = dataset.map(self.tokenize_function, batched=True)
         dataset.set_format(
             type="torch",
