@@ -59,12 +59,30 @@ class JobClassifierTrainer:
         return {"accuracy": accuracy_score(p.label_ids, preds)}
 
     def tokenize_function(self, examples):
-        return self.tokenizer(
+        # Tokenize and return only plain-Python lists for expected columns so
+        # `datasets.Dataset.map` will add them as dataset columns.
+        out = self.tokenizer(
             examples["description"],
             truncation=True,
             padding="max_length",
             max_length=256,
         )
+
+        # Convert any tensor/np types to lists and keep only relevant keys
+        result = {}
+        for key in ("input_ids", "attention_mask", "token_type_ids"):
+            if key in out:
+                val = out[key]
+                # convert to plain lists if possible
+                try:
+                    if hasattr(val, "tolist"):
+                        result[key] = val.tolist()
+                    else:
+                        result[key] = list(val)
+                except Exception:
+                    result[key] = out[key]
+
+        return result
 
     def prepare_datasets_from_tuples(
         self,
