@@ -1,6 +1,8 @@
 import os
 import sys
 import csv
+import torch
+from transformers import TrainingArguments, Trainer
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.insert(0, parent_dir)
@@ -108,43 +110,186 @@ class ActiveLearning:
     @staticmethod
     def prep_labels(samples):
         print("Please label your suggested samples... (simulated)")
-
+        
+        if not samples:
+            print("Warning: No samples to label")
+            return []
+        
+        labeled_samples = []
+        
         for sample in samples:
             sample_id = sample[0]
-            predicted_label = sample[3]  # ya da simüle edilmiş label
-            # DB’de güncelle
-            database.update_labelled_sample(sample_id, predicted_label)
-
-        return samples
+            description = sample[1]
+            
+            # Simulated labeling logic - assign a random label between 0-6 (7 classes)
+            import random
+            simulated_label = str(random.randint(0, 6))
+            
+            print(f"Sample {sample_id}: Simulated label = {simulated_label}")
+            
+            # DB'de güncelle
+            database.update_labelled_sample(sample_id, simulated_label)
+            
+            # Create a new tuple with the label at index 3
+            new_sample = list(sample)
+            if len(new_sample) > 3:
+                new_sample[3] = simulated_label
+            else:
+                # If tuple doesn't have label position, extend it
+                while len(new_sample) <= 3:
+                    new_sample.append(None)
+                new_sample[3] = simulated_label
+            
+            labeled_samples.append(tuple(new_sample))
+        
+        print(f"Simulated labeling complete. Labeled {len(labeled_samples)} samples.")
+        return labeled_samples
 
     @staticmethod
     def train_iterate(samples, source_model_dir=None, save_dir=None, previous_trainer=None):
         trainer = JobClassifierTrainer()
-
+        
         # Load tokenizer/model from given source_model_dir (or base)
         source_model_dir = source_model_dir or ActiveLearning.BASE_DIR
         if os.path.exists(source_model_dir):
             trainer.load_model(source_model_dir)
         else:
             trainer.initialize_model()
-
-        # Use the incoming samples only for training (no internal split)
-        train_ds, eval_ds = trainer.prepare_datasets_from_tuples(
-            samples,
-            description_index=1,
-            label_index=3,
-            split=False,
-        )
-
-        trained_trainer = trainer.train(train_ds, None)
-
-        # Save into provided save_dir (create if missing). If not provided, fallback to ./fine_tuned_eurobert
+        
+        # DEBUG: Check what we have in samples
+        if samples and len(samples) > 0:
+            print(f"DEBUG: Number of samples for training: {len(samples)}")
+            print(f"DEBUG: First sample label at index 3: {samples[0][3] if len(samples[0]) > 3 else 'No label'}")
+        
+        try:
+            # FIXED: Eski train.py ile uyumlu hale getir - split parametresi var
+            # Active learning için tüm veriyi kullanıyoruz, test split yok
+            train_ds, eval_ds = trainer.prepare_datasets_from_tuples(
+                samples,
+                description_index=1,
+                label_index=3,
+                split=False,  # Tüm veriyi eğitim için kullan
+            )
+            print(f"DEBUG: Dataset prepared successfully. Train dataset size: {len(train_ds)}")
+            
+        except Exception as e:
+            print(f"ERROR in prepare_datasets_from_tuples: {e}")
+            if samples and len(samples) > 0:
+                print(f"Sample 0 content: {samples[0]}")
+                print(f"Sample 0 length: {len(samples[0])}")
+            raise
+        
+        # Train with train_ds only (eval_ds will be None)
+        transformers_trainer = trainer.train(train_ds, None)
+        
+        # Save into provided save_dir (create if missing)
         save_dir = save_dir or "./fine_tuned_eurobert"
         os.makedirs(save_dir, exist_ok=True)
-        trainer.save_model(save_dir, trained_trainer)
-
-        return trainer, trained_trainer
-
+        trainer.save_model(save_dir, transformers_trainer)
+        
+        # Return both the custom trainer and the transformers trainer
+        return trainer, transformers_trainer
+    
+    @staticmethod
+    def evaluate_on_test_set(trainer_obj, test_samples):
+        """Evaluate model on test samples and return accuracy"""
+        if not test_samples:
+            return None
+        
+        try:
+            # Test dataset hazırla (split=True yapmıyoruz, direkt tüm test verisi)
+            test_ds, _ = trainer_obj.prepare_datasets_from_tuples(
+                test_samples,
+                description_index=1,
+                label_index=3,
+                split=False,  # Test verisi için split yok
+            )
+            
+            # Create a new Trainer for evaluation
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            trainer_obj.model.to(device)
+            
+            # Training arguments ile Trainer oluştur
+            training_args = TrainingArguments(
+                output_dir="./temp_eval",
+                eval_strategy="no",
+                per_device_eval_batch_size=16,
+                remove_unused_columns=False,
+                report_to="none",
+                fp16=False,
+            )
+            
+            eval_trainer = Trainer(
+                model=trainer_obj.model,
+                args=training_args,
+                tokenizer=trainer_obj.tokenizer,
+                compute_metrics=trainer_obj.compute_metrics,
+            )
+            
+            # Evaluate
+            eval_result = eval_trainer.evaluate(test_ds)
+            return eval_result.get("eval_accuracy", None)
+            
+        except Exception as e:
+            print(f"Warning: Evaluation failed: {e}")
+            # Try simple evaluation as fallback
+            try:
+                return ActiveLearning.simple_evaluate(trainer_obj, test_samples)
+            except Exception as e2:
+                print(f"Simple evaluation also failed: {e2}")
+                return None
+    
+    @staticmethod
+    def simple_evaluate(trainer_obj, test_samples):
+        """Basit accuracy hesaplama (fallback method)"""
+        if not trainer_obj.label_encoder:
+            return None
+        
+        correct = 0
+        total = 0
+        
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        trainer_obj.model.to(device)
+        trainer_obj.model.eval()
+        
+        with torch.no_grad():
+            for sample in test_samples:
+                if len(sample) < 4:
+                    continue
+                    
+                desc = sample[1]
+                true_label = sample[3]
+                
+                if not desc or not true_label:
+                    continue
+                
+                # Tokenize
+                inputs = trainer_obj.tokenizer(
+                    str(desc),
+                    truncation=True,
+                    padding=True,
+                    max_length=256,
+                    return_tensors="pt"
+                ).to(device)
+                
+                # Predict
+                outputs = trainer_obj.model(**inputs)
+                pred_id = torch.argmax(outputs.logits, dim=-1).item()
+                
+                # Label encoder ile decode et
+                try:
+                    # Label encoder'ın sınıflarını al
+                    classes = trainer_obj.label_encoder.classes_
+                    if pred_id < len(classes):
+                        pred_label = classes[pred_id]
+                        if str(pred_label) == str(true_label):
+                            correct += 1
+                    total += 1
+                except:
+                    continue
+        
+        return correct / total if total > 0 else None
+        
     @staticmethod
     def check_stop_condition(test_folder, iteration, previous_accuracy=None, new_accuracy=None):
         # Stop condition checks using multiple criteria:
@@ -411,22 +556,31 @@ class ActiveLearning:
                 test_samples = None
 
         while True:
+            print(f"\n--- Iteration {iteration} ---")
+            
             # 1. Model tahmini (use current_model_dir)
             ActiveLearning.model_predict(max_samples, model_dir=current_model_dir)
 
             # 2. Algoritma ile etiketlenecek ornekleri sec
             selected_samples = function_algorithm()
+            print(f"Selected {len(selected_samples)} samples for labeling")
 
             # ara adim: veriyi etiketle
             labeled_samples = ActiveLearning.prep_labels(selected_samples)
 
             # 3. Modeli eğit / güncelle
             # Train and save into the run-specific model folder (overwrite each iteration)
-            trainer_obj, trained_trainer = ActiveLearning.train_iterate(
-                labeled_samples,
-                source_model_dir=current_model_dir,
-                save_dir=run_model_dir,
-            )
+            try:
+                trainer_obj, transformers_trainer = ActiveLearning.train_iterate(
+                    labeled_samples,
+                    source_model_dir=current_model_dir,
+                    save_dir=run_model_dir,
+                )
+                print(f"Model trained successfully on {len(labeled_samples)} samples")
+            except Exception as e:
+                print(f"ERROR in train_iterate: {e}")
+                # If training fails, break the loop
+                break
 
             # After training, switch prediction to the latest model in run_model_dir
             current_model_dir = run_model_dir
@@ -434,18 +588,20 @@ class ActiveLearning:
             # 4. Accuracy kontrolü
             new_accuracy = None
 
-            # If an external test set is provided, evaluate on it using trainer helper
+            # If an external test set is provided, evaluate on it
             if test_samples:
                 try:
-                    metrics = trainer_obj.evaluate_on_tuples(test_samples)
-                    new_accuracy = metrics.get("eval_accuracy", None)
-                except Exception:
+                    print(f"Evaluating on test set ({len(test_samples)} samples)...")
+                    new_accuracy = ActiveLearning.evaluate_on_test_set(trainer_obj, test_samples)
+                    print(f"Test accuracy: {new_accuracy}")
+                except Exception as e:
+                    print(f"Warning: Evaluation failed: {e}")
                     new_accuracy = None
 
             # 5. Stop condition (use iteration and accuracy if available)
             stop, reason = ActiveLearning.check_stop_condition(test_folder, iteration, previous_accuracy, new_accuracy)
 
-            # 6. Sonuçları CSV’ye yaz
+            # 6. Sonuçları CSV'ye yaz
             result_file = ActiveLearning.get_next_result_file(test_folder)
             with open(result_file, "w", newline="") as f:
                 writer = csv.DictWriter(f, fieldnames=[
@@ -518,6 +674,11 @@ class ActiveLearning:
 
             if stop:
                 print(f"Stopping: {reason}")
+                break
+
+            # Safety check: don't exceed maximum iterations
+            if iteration > ActiveLearning.hyper_params["max_iterations"]:
+                print(f"Reached maximum iterations ({ActiveLearning.hyper_params['max_iterations']})")
                 break
 
 if __name__ == '__main__':

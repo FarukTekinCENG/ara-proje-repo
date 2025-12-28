@@ -59,51 +59,12 @@ class JobClassifierTrainer:
         return {"accuracy": accuracy_score(p.label_ids, preds)}
 
     def tokenize_function(self, examples):
-        # Tokenize the text
-        tokenized = self.tokenizer(
+        return self.tokenizer(
             examples["description"],
             truncation=True,
             padding="max_length",
             max_length=256,
         )
-        
-        # CRITICAL FIX: Convert PyTorch tensors to lists
-        # This ensures dataset.map can properly add the columns
-        result = {}
-        for key in tokenized:
-            # Convert tensors to Python lists for compatibility
-            if hasattr(tokenized[key], 'tolist'):
-                result[key] = tokenized[key].tolist()
-            else:
-                result[key] = tokenized[key]
-                
-        return result
-        
-    # def tokenize_function(self, examples):
-    #     # Tokenize and return only plain-Python lists for expected columns so
-    #     # `datasets.Dataset.map` will add them as dataset columns.
-    #     out = self.tokenizer(
-    #         examples["description"],
-    #         truncation=True,
-    #         padding="max_length",
-    #         max_length=256,
-    #     )
-
-    #     # Convert any tensor/np types to lists and keep only relevant keys
-    #     result = {}
-    #     for key in ("input_ids", "attention_mask", "token_type_ids"):
-    #         if key in out:
-    #             val = out[key]
-    #             # convert to plain lists if possible
-    #             try:
-    #                 if hasattr(val, "tolist"):
-    #                     result[key] = val.tolist()
-    #                 else:
-    #                     result[key] = list(val)
-    #             except Exception:
-    #                 result[key] = out[key]
-
-    #     return result
 
     def prepare_datasets_from_tuples(
         self,
@@ -112,8 +73,7 @@ class JobClassifierTrainer:
         label_index=3,
         test_size=0.2,
         seed=42,
-        split=True,
-        fit_label_encoder=True,
+        split=True  # ESKİSİ GİBİ split=True, ama opsiyonel
     ):
         descriptions = []
         labels = []
@@ -125,17 +85,19 @@ class JobClassifierTrainer:
             desc = row[description_index]
             label = row[label_index]
 
+            # ESKİ KOD: Hem desc hem label gerekiyor
             if desc and label:
                 descriptions.append(str(desc))
                 labels.append(str(label))
 
-        if fit_label_encoder:
-            self.label_encoder = LabelEncoder()
-            encoded_labels = self.label_encoder.fit_transform(labels)
-        else:
-            if self.label_encoder is None:
-                raise ValueError("label_encoder is not initialized; cannot transform labels")
-            encoded_labels = self.label_encoder.transform(labels)
+        if not descriptions:
+            raise ValueError(f"No valid descriptions found in tuple list. First tuple: {tuple_list[0] if tuple_list else 'Empty list'}")
+
+        # ESKİ KOD: Her zaman label encoder'ı fit et
+        self.label_encoder = LabelEncoder()
+        encoded_labels = self.label_encoder.fit_transform(labels)
+        print(f"Label encoder fitted. Classes: {self.label_encoder.classes_}")
+        print(f"Number of samples: {len(descriptions)}")
 
         dataset = Dataset.from_dict(
             {
@@ -144,43 +106,12 @@ class JobClassifierTrainer:
             }
         )
 
-        # Ensure tokenizer/model are initialized before tokenization step.
-        if self.tokenizer is None:
-            try:
-                self.initialize_model()
-            except Exception:
-                # If initialization fails, raise a clear error so caller can handle it.
-                raise RuntimeError("Failed to initialize tokenizer/model before tokenization")
-
-        # Run tokenization with robust error reporting so we can debug missing columns.
-        try:
-            dataset = dataset.map(self.tokenize_function, batched=True)
-        except Exception as e:
-            print(f"[DEBUG] Tokenization failed inside dataset.map: {e}")
-            print(f"[DEBUG] tokenizer is None: {self.tokenizer is None}")
-            # Try running tokenize_function on a single example to see returned keys
-            try:
-                sample_ex = {"description": [descriptions[0]]} if descriptions else {"description": []}
-                sample_out = self.tokenize_function(sample_ex)
-                try:
-                    sample_keys = list(sample_out.keys())
-                except Exception:
-                    sample_keys = f"uninspectable sample_out type: {type(sample_out)}"
-                print(f"[DEBUG] sample tokenization output keys: {sample_keys}")
-            except Exception as e2:
-                print(f"[DEBUG] sample tokenize_function raised: {e2}")
-            raise
-        # Verify tokenized columns exist before setting format to avoid cryptic errors.
-        cols = list(dataset.column_names)
-        expected = ["input_ids", "attention_mask"]
-        missing = [c for c in expected if c not in cols]
-        if missing:
-            raise RuntimeError(f"Missing tokenized columns {missing}. Current columns: {cols}")
-
+        dataset = dataset.map(self.tokenize_function, batched=True)
         dataset.set_format(
             type="torch",
             columns=["input_ids", "attention_mask", "label"],
         )
+        
         if split:
             split_ds = dataset.train_test_split(test_size=test_size, seed=seed)
             return split_ds["train"], split_ds["test"]
@@ -196,7 +127,7 @@ class JobClassifierTrainer:
 
         self.model.to(device)
 
-        # If no eval dataset provided, disable evaluation strategy to avoid Trainer errors
+        # Eval dataset yoksa evaluation'ı kapat
         eval_strategy = "epoch" if eval_dataset is not None else "no"
 
         training_args = TrainingArguments(
@@ -224,37 +155,6 @@ class JobClassifierTrainer:
         trainer.train()
         return trainer
 
-    def evaluate(self, test_dataset):
-        """Evaluate the current model on a provided test dataset.
-
-        The `test_dataset` must be tokenized and formatted similarly to the training dataset.
-        Returns the metrics dict from `Trainer.evaluate()`.
-        """
-        if self.model is None:
-            self.initialize_model()
-
-        trainer = Trainer(
-            model=self.model,
-            tokenizer=self.tokenizer,
-            compute_metrics=self.compute_metrics,
-        )
-
-        return trainer.evaluate(eval_dataset=test_dataset)
-
-    def build_dataset_from_tuples(self, tuple_list, description_index=1, label_index=3):
-        # Deprecated: use `prepare_datasets_from_tuples(..., fit_label_encoder=False, split=False)` instead
-        return self.prepare_datasets_from_tuples(tuple_list, description_index, label_index, split=False, fit_label_encoder=False)
-
-    def evaluate_on_tuples(self, tuple_list, description_index=1, label_index=3):
-        """Build dataset from tuples and evaluate the current model on it.
-
-        Returns metrics dict or raises ValueError if dataset couldn't be built.
-        """
-        ds, _ = self.prepare_datasets_from_tuples(tuple_list, description_index, label_index, split=False, fit_label_encoder=False)
-        if ds is None:
-            raise ValueError("No valid test examples to evaluate")
-        return self.evaluate(ds)
-
     def save_model(self, output_dir="./fine_tuned_eurobert", trainer=None):
         os.makedirs(output_dir, exist_ok=True)
 
@@ -273,6 +173,35 @@ class JobClassifierTrainer:
 
         print(f"Model saved to {output_dir}")
 
+    def evaluate(self, eval_dataset):
+        """Evaluate the model on given dataset and return metrics"""
+        if self.model is None:
+            raise ValueError("Model not initialized. Call load_model() or initialize_model() first.")
+        
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model.to(device)
+        
+        # Create trainer for evaluation
+        training_args = TrainingArguments(
+            output_dir="./temp_eval",
+            eval_strategy="no",
+            per_device_eval_batch_size=16,
+            remove_unused_columns=False,
+            report_to="none",
+            fp16=False,
+        )
+        
+        trainer = Trainer(
+            model=self.model,
+            args=training_args,
+            tokenizer=self.tokenizer,
+            compute_metrics=self.compute_metrics,
+        )
+        
+        # Evaluate
+        eval_result = trainer.evaluate(eval_dataset)
+        return eval_result
+
 
 if __name__ == "__main__":
     samples = database.get_unlabelled_samples(100, 0)
@@ -284,14 +213,11 @@ if __name__ == "__main__":
     trainer = JobClassifierTrainer()
     trainer.load_model("./fine_tuned_eurobert")
 
-    # Prepare dataset WITHOUT an automatic train/test split: incoming data should be used only for training.
     train_ds, eval_ds = trainer.prepare_datasets_from_tuples(
         samples,
         description_index=1,
         label_index=3,
-        split=False,
     )
 
-    trained_trainer = trainer.train(train_ds, None)
+    trained_trainer = trainer.train(train_ds, eval_ds)
     trainer.save_model("./fine_tuned_eurobert", trained_trainer)
-
