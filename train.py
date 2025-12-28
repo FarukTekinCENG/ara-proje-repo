@@ -59,30 +59,51 @@ class JobClassifierTrainer:
         return {"accuracy": accuracy_score(p.label_ids, preds)}
 
     def tokenize_function(self, examples):
-        # Tokenize and return only plain-Python lists for expected columns so
-        # `datasets.Dataset.map` will add them as dataset columns.
-        out = self.tokenizer(
+        # Tokenize the text
+        tokenized = self.tokenizer(
             examples["description"],
             truncation=True,
             padding="max_length",
             max_length=256,
         )
-
-        # Convert any tensor/np types to lists and keep only relevant keys
+        
+        # CRITICAL FIX: Convert PyTorch tensors to lists
+        # This ensures dataset.map can properly add the columns
         result = {}
-        for key in ("input_ids", "attention_mask", "token_type_ids"):
-            if key in out:
-                val = out[key]
-                # convert to plain lists if possible
-                try:
-                    if hasattr(val, "tolist"):
-                        result[key] = val.tolist()
-                    else:
-                        result[key] = list(val)
-                except Exception:
-                    result[key] = out[key]
-
+        for key in tokenized:
+            # Convert tensors to Python lists for compatibility
+            if hasattr(tokenized[key], 'tolist'):
+                result[key] = tokenized[key].tolist()
+            else:
+                result[key] = tokenized[key]
+                
         return result
+        
+    # def tokenize_function(self, examples):
+    #     # Tokenize and return only plain-Python lists for expected columns so
+    #     # `datasets.Dataset.map` will add them as dataset columns.
+    #     out = self.tokenizer(
+    #         examples["description"],
+    #         truncation=True,
+    #         padding="max_length",
+    #         max_length=256,
+    #     )
+
+    #     # Convert any tensor/np types to lists and keep only relevant keys
+    #     result = {}
+    #     for key in ("input_ids", "attention_mask", "token_type_ids"):
+    #         if key in out:
+    #             val = out[key]
+    #             # convert to plain lists if possible
+    #             try:
+    #                 if hasattr(val, "tolist"):
+    #                     result[key] = val.tolist()
+    #                 else:
+    #                     result[key] = list(val)
+    #             except Exception:
+    #                 result[key] = out[key]
+
+    #     return result
 
     def prepare_datasets_from_tuples(
         self,
