@@ -328,65 +328,66 @@ class ActiveLearning:
         return database.diversity_sampling_selection(ActiveLearning.hyper_params["N"])
 
     @staticmethod
-    def query_by_comitee():
-        # Simple committee voting selection.
-        # - For each model in `ActiveLearning.model_list` create a temporary table
-        #   `committee_{i}` and populate it with (pool_id, model_prediction, uncertainty_score).
-        # - Aggregate member predictions in Python, compute disagreement (count distinct predictions)
-        #   and select top-N samples with highest disagreement.
-        # - Return samples in the same tuple format as other selection methods.
+    def query_by_comitee(max_samples=MAX_SAMPLES):
         import collections
         from collections import defaultdict
+        import math
 
         N = ActiveLearning.hyper_params.get("N", 5)
         models = ActiveLearning.model_list
         created_tables = []
 
         try:
-            # Create temp tables per member (use permanent tables and drop later to simplify portability)
+            # 1️⃣ Create temp tables per member
             for idx, m in enumerate(models):
                 tbl = f"committee_{idx}"
                 created_tables.append(tbl)
-                create_sql = f"""
-                CREATE TABLE IF NOT EXISTS {tbl} (
-                    pool_id INTEGER PRIMARY KEY,
-                    model_prediction TEXT,
-                    uncertainty_score DOUBLE PRECISION
-                );
-                """
                 with database.get_db_connection() as conn:
                     with conn.cursor() as cur:
-                        cur.execute(create_sql)
+                        cur.execute(f"""
+                            CREATE TABLE IF NOT EXISTS {tbl} (
+                                pool_id INTEGER PRIMARY KEY,
+                                model_prediction TEXT,
+                                uncertainty_score DOUBLE PRECISION
+                            );
+                        """)
                     conn.commit()
 
-            # For each model, try to load the member (HF id or local). Log detailed status.
+            # 2️⃣ Load each model & make predictions
             for idx, model_name in enumerate(models):
-                print(f"[committee] loading member {idx}: {model_name}")
                 predictor = ModelPredictor(model_name)
                 try:
                     predictor.load_model()
-                    print(f"[committee] member {idx} loaded successfully: {model_name}")
+                    print(f"[committee] member {idx} loaded: {model_name}")
                 except Exception as e:
                     print(f"[committee] failed to load member {idx} ({model_name}): {e}")
-                    # skip this member
                     continue
+
                 batch_size = 1000
                 page = 0
+                total_processed = 0
                 rows_to_insert = []
+
                 while True:
                     batch = database.get_unlabelled_samples(batch_size, page * batch_size)
-                    if not batch:
+                    if not batch or (max_samples is not None and total_processed >= max_samples):
                         break
+
+                    # max_samples kontrolü
+                    if max_samples is not None:
+                        remaining = max_samples - total_processed
+                        if len(batch) > remaining:
+                            batch = batch[:remaining]
+
                     for x in batch:
-                        pool_id = x[0]
-                        desc = x[1]
+                        pool_id, desc = x[0], x[1]
+                        if not desc:
+                            continue
                         try:
-                            res = predictor.predict(desc)
+                            res = predictor.predict(text=desc)
                             pred = res.get("predicted_class")
                             probs = res.get("probs")
                             if probs:
-                                # compute entropy
-                                import math
                                 ent = -sum([p * math.log(p + 1e-12) for p in probs])
                                 unc = float(ent)
                             else:
@@ -397,18 +398,24 @@ class ActiveLearning:
                             unc = None
                         rows_to_insert.append((pool_id, pred, unc))
 
-                    # flush batch inserts
+                    # Insert batch
                     if rows_to_insert:
-                        insert_sql = f"INSERT INTO committee_{idx} (pool_id, model_prediction, uncertainty_score) VALUES (%s, %s, %s) ON CONFLICT (pool_id) DO UPDATE SET model_prediction = EXCLUDED.model_prediction, uncertainty_score = EXCLUDED.uncertainty_score;"
                         with database.get_db_connection() as conn:
                             with conn.cursor() as cur:
-                                cur.executemany(insert_sql, rows_to_insert)
+                                cur.executemany(
+                                    f"INSERT INTO committee_{idx} (pool_id, model_prediction, uncertainty_score) "
+                                    f"VALUES (%s, %s, %s) "
+                                    f"ON CONFLICT (pool_id) DO UPDATE SET model_prediction = EXCLUDED.model_prediction, uncertainty_score = EXCLUDED.uncertainty_score;",
+                                    rows_to_insert
+                                )
                             conn.commit()
                         rows_to_insert = []
+
+                    total_processed += len(batch)
                     page += 1
 
-            # Read back predictions per member and aggregate
-            preds_by_id = defaultdict(list)  # pool_id -> list of predicted_class
+            # 3️⃣ Aggregate member predictions and compute disagreement
+            preds_by_id = defaultdict(list)
             uncert_by_id = defaultdict(list)
             for idx in range(len(models)):
                 table = f"committee_{idx}"
@@ -420,25 +427,27 @@ class ActiveLearning:
                             if unc is not None:
                                 uncert_by_id[pid].append(float(unc))
 
-            # Compute disagreement score = number of distinct predictions (higher -> more disagreement)
+            # 4️⃣ Compute disagreement score and select top-N
             scored = []
             for pid, preds in preds_by_id.items():
                 distinct = len([p for p in set(preds) if p is not None])
-                # tie-breaker: average uncertainty across members (higher -> more uncertain)
                 avg_unc = sum(uncert_by_id.get(pid, [0])) / max(1, len(uncert_by_id.get(pid, [])))
-                score = (distinct, avg_unc)
-                scored.append((pid, score))
+                scored.append((pid, (distinct, avg_unc)))
 
-            # Sort by distinct desc, then avg_unc desc
             scored.sort(key=lambda x: (x[1][0], x[1][1]), reverse=True)
             selected_ids = [s[0] for s in scored[:N]]
 
             if not selected_ids:
                 return []
 
-            # Fetch full sample rows from pool for the selected ids
+            # 5️⃣ Fetch full sample rows
             placeholders = ','.join(['%s'] * len(selected_ids))
-            query = f"SELECT id, description, is_labelled, label, model_prediction, uncertainty_score FROM pool WHERE id IN ({placeholders}) ORDER BY id;"
+            query = f"""
+                SELECT id, description, is_labelled, label, model_prediction, uncertainty_score
+                FROM pool
+                WHERE id IN ({placeholders})
+                ORDER BY id;
+            """
             with database.get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(query, tuple(selected_ids))
@@ -447,7 +456,7 @@ class ActiveLearning:
             return rows
 
         finally:
-            # cleanup created tables
+            # 6️⃣ Cleanup temp tables
             for tbl in created_tables:
                 try:
                     with database.get_db_connection() as conn:

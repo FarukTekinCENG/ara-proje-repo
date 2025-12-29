@@ -232,7 +232,7 @@ class JobClassifierTrainer:
             per_device_train_batch_size=16,
             per_device_eval_batch_size=16,
             gradient_accumulation_steps=1,
-            num_train_epochs=3,                         # 1 AZ > 3-5 OLMALI
+            num_train_epochs=7,                         # 1 AZ > 3-5 OLMALI
             learning_rate=2e-5,
             weight_decay=0.01,
             logging_steps=50,
@@ -240,8 +240,6 @@ class JobClassifierTrainer:
             report_to="none",
             fp16=fp16,
             bf16=bf16,
-            #evaluation_strategy="no",   # ✅ ZORUNLU
-            #save_strategy="no",         # ✅ Tavsiye edilir
         )
 
         trainer = Trainer(
