@@ -119,71 +119,10 @@ class JobClassifierTrainer:
         return self.tokenizer(
             examples["description"],
             truncation=True,
-            padding="longest",
+            padding="max_length",
             max_length=256,
         )
 
-    # --------------------------------------------------
-    # DATASET PREPARATION (NO FIT HERE ❌)
-    # --------------------------------------------------
-    # def prepare_datasets_from_tuples(
-    #     self,
-    #     tuple_list,
-    #     description_index=1,
-    #     label_index=3,
-    #     test_size=0.2,
-    #     seed=42,
-    #     split=True,
-    # ):
-    #     if self.label_encoder is None:
-    #         raise RuntimeError(
-    #             "LabelEncoder not initialized. "
-    #             "It must be fitted once during base model initialization."
-    #         )
-
-    #     descriptions = []
-    #     labels = []
-
-    #     for row in tuple_list:
-    #         if len(row) <= max(description_index, label_index):
-    #             continue
-
-    #         desc = row[description_index]
-    #         label = row[label_index]
-
-    #         if desc and label:
-    #             descriptions.append(str(desc))
-    #             labels.append(str(label))
-
-    #     if not descriptions:
-    #         raise ValueError("No valid samples found for training.")
-
-    #     # 🔒 SADECE TRANSFORM
-    #     encoded_labels = self.label_encoder.transform(labels)
-
-    #     print(f"Label encoder classes (fixed): {self.label_encoder.classes_}")
-    #     print(f"Number of samples: {len(descriptions)}")
-
-    #     dataset = Dataset.from_dict(
-    #         {
-    #             "description": descriptions,
-    #             "label": encoded_labels,
-    #         }
-    #     )
-
-    #     dataset = dataset.map(self.tokenize_function, batched=True)
-    #     dataset.set_format(
-    #         type="torch",
-    #         columns=["input_ids", "attention_mask", "label"],
-    #     )
-
-    #     if split:
-    #         split_ds = dataset.train_test_split(
-    #             test_size=test_size, seed=seed
-    #         )
-    #         return split_ds["train"], split_ds["test"]
-
-    #     return dataset, None
     def prepare_datasets_from_tuples(
         self,
         tuple_list,
@@ -258,7 +197,7 @@ class JobClassifierTrainer:
             }
         )
 
-        dataset = dataset.map(self.tokenize_function, num_proc=os.cpu_count(), batched=True)
+        dataset = dataset.map(self.tokenize_function, batched=True)
         dataset.set_format(
             type="torch",
             columns=["input_ids", "attention_mask", "label"],
@@ -284,6 +223,9 @@ class JobClassifierTrainer:
         print(f">> Training on {device}")
         self.model.to(device)
 
+        fp16 = torch.cuda.is_available() and not torch.cuda.is_bf16_supported()
+        bf16 = torch.cuda.is_bf16_supported()
+
         # ⚠️ evaluation_strategy / save_strategy YOK
         training_args = TrainingArguments(
             output_dir="./results",
@@ -296,17 +238,19 @@ class JobClassifierTrainer:
             logging_steps=50,
             remove_unused_columns=False,
             report_to="none",
-            #fp16=True,                              # NVIDIA
-            bf16=True,                              # A100 / H100 varsa
+            fp16=fp16,
+            bf16=bf16,
+            evaluation_strategy="no",   # ✅ ZORUNLU
+            save_strategy="no",         # ✅ Tavsiye edilir
         )
 
         trainer = Trainer(
             model=self.model,
             args=training_args,
             train_dataset=train_dataset,
-            eval_dataset=eval_dataset,  # None olabilir, sorun yok
+            #eval_dataset=eval_dataset,  # None olabilir, sorun yok
             tokenizer=self.tokenizer,
-            compute_metrics=self.compute_metrics if eval_dataset is not None else None,
+            #compute_metrics=self.compute_metrics if eval_dataset is not None else None,
         )
 
         trainer.train()

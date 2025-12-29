@@ -1,2 +1,0 @@
->> GPU nun %10 u bile zar zor kullanılıyor. optimizasyon.
->> base classifier ufak eğitimi
