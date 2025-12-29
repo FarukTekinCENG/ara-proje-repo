@@ -13,6 +13,10 @@ from transformers import (
 from sklearn.metrics import accuracy_score
 
 
+# pytorch optimizasyonları
+torch.backends.cudnn.benchmark = True
+torch.set_float32_matmul_precision("high")
+
 class JobClassifierTrainer:
     model_name = "EuroBERT/EuroBERT-210m"
 
@@ -115,7 +119,7 @@ class JobClassifierTrainer:
         return self.tokenizer(
             examples["description"],
             truncation=True,
-            padding="max_length",
+            padding="longest",
             max_length=256,
         )
 
@@ -254,7 +258,7 @@ class JobClassifierTrainer:
             }
         )
 
-        dataset = dataset.map(self.tokenize_function, batched=True)
+        dataset = dataset.map(self.tokenize_function, num_proc=os.cpu_count(), batched=True)
         dataset.set_format(
             type="torch",
             columns=["input_ids", "attention_mask", "label"],
@@ -283,15 +287,17 @@ class JobClassifierTrainer:
         # ⚠️ evaluation_strategy / save_strategy YOK
         training_args = TrainingArguments(
             output_dir="./results",
-            per_device_train_batch_size=2,
-            per_device_eval_batch_size=2,
-            gradient_accumulation_steps=8,
+            per_device_train_batch_size=16,
+            per_device_eval_batch_size=16,
+            gradient_accumulation_steps=1,
             num_train_epochs=3,                         # 1 AZ > 3-5 OLMALI
             learning_rate=2e-5,
             weight_decay=0.01,
             logging_steps=50,
             remove_unused_columns=False,
             report_to="none",
+            #fp16=True,                              # NVIDIA
+            bf16=True,                              # A100 / H100 varsa
         )
 
         trainer = Trainer(

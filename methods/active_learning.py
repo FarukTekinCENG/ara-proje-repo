@@ -18,10 +18,10 @@ MAX_SAMPLES = 5000
 
 class ActiveLearning:
     hyper_params = {
-        "N": 30,         # number of samples selected each iteration
+        "N": 300,         # number of samples selected each iteration
         "I": 0.001,     # improvement threshold
         "T": 0.1,        # model prediction certainty threshold
-        "max_iterations": 20,  # maximum number of iterations
+        "max_iterations": 30,  # maximum number of iterations
         "succcess_rate_threshold": 0.9,  # desired accuracy to stop
     }
     BASE_DIR = "./base_classifier"
@@ -190,7 +190,7 @@ class ActiveLearning:
                 per_device_eval_batch_size=16,
                 remove_unused_columns=False,
                 report_to="none",
-                fp16=False,
+                fp16=True,
             )
             
             eval_trainer = Trainer(
@@ -458,7 +458,7 @@ class ActiveLearning:
                     pass
 
     @staticmethod
-    def run(function_algorithm, max_samples=None, test_samples=None, test_sample_limit=300, test_from_db=True):
+    def run(function_algorithm, max_samples=None, test_samples=None, test_sample_limit=2000, test_from_db=True):
         # Ensure base classifier exists
         os.makedirs(ActiveLearning.RUNS_BASE, exist_ok=True)
         if not os.path.exists(ActiveLearning.BASE_DIR):
@@ -748,7 +748,7 @@ if __name__ == '__main__':
     methods = [
         #ActiveLearning.random_sampling,
         ActiveLearning.uncertainty_sampling,
-        #ActiveLearning.diversity_sampling,
+        ActiveLearning.diversity_sampling,
         ActiveLearning.query_by_comitee,
     ]
 
