@@ -536,6 +536,88 @@ class ActiveLearning:
                 print(f"Warning: failed to load test samples from DB: {e}")
                 test_samples = None
 
+        # ============================================================
+        # BASE CLASSIFIER EVALUATION (iteration = 0)
+        # ============================================================
+        base_accuracy = None
+
+        if test_samples:
+            try:
+                print(f"Evaluating BASE classifier on test set ({len(test_samples)} samples)...")
+
+                base_trainer = JobClassifierTrainer()
+                base_trainer.load_model(ActiveLearning.BASE_DIR)
+
+                base_accuracy = ActiveLearning.evaluate_on_test_set(
+                    base_trainer, test_samples
+                )
+
+                print(f"BASE test accuracy: {base_accuracy}")
+
+            except Exception as e:
+                print(f"Warning: BASE evaluation failed: {e}")
+                base_accuracy = None
+
+        # --- CSV write (same schema as others) ---
+        base_result_file = ActiveLearning.get_next_result_file(test_folder)
+        with open(base_result_file, "w", newline="") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=[
+                    "iteration",
+                    "n_labeled",
+                    "previous_accuracy",
+                    "new_accuracy",
+                    "stop_condition",
+                    "stop_reason",
+                ],
+            )
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "iteration": 0,
+                    "n_labeled": 0,
+                    "previous_accuracy": None,
+                    "new_accuracy": base_accuracy,
+                    "stop_condition": False,
+                    "stop_reason": "base_classifier",
+                }
+            )
+
+        # --- Remote DB insert (aynı muamele) ---
+        try:
+            metrics = {"accuracy": base_accuracy} if base_accuracy is not None else None
+            params = {
+                "run_model_dir": ActiveLearning.BASE_DIR,
+                "test_folder": test_folder,
+                "method": "BASE",
+                "DATA_SIZE": data_size,
+            }
+
+            database.insert_test_result_remote(
+                test_id=test_id,
+                iteration_no=0,
+                model_name="base_classifier",
+                train_data_size=0,
+                method="BASE",
+                data_size=data_size,
+                N=None,
+                T=None,
+                I=None,
+                metrics=metrics,
+                params=params,
+                run_by=os.getenv("USER") or os.getenv("USERNAME"),
+                notes="base_classifier",
+            )
+
+            print("Inserted BASE classifier result to remote DB")
+
+        except Exception as e:
+            print(f"Warning: failed to insert BASE result to DB: {e}")
+
+        # Base accuracy artık referans noktası
+        previous_accuracy = base_accuracy
+
         while True:
             print(f"\n--- Iteration {iteration} ---")
             

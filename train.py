@@ -18,13 +18,13 @@ class JobClassifierTrainer:
 
     # 🔒 SABİT LABEL UZAYI (ASLA DEĞİŞMEZ)
     ALL_LABELS = [
-        "Full-time",
-        "Part-time",
         "Contract",
+        "Full-time",
         "Internship",
-        "Temporary",
-        "Freelance",
         "Other",
+        "Part-time",
+        "Temporary",
+        "Volunteer",
     ]
 
     num_labels = len(ALL_LABELS)
