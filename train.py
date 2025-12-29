@@ -240,8 +240,8 @@ class JobClassifierTrainer:
             report_to="none",
             fp16=fp16,
             bf16=bf16,
-            evaluation_strategy="no",   # ✅ ZORUNLU
-            save_strategy="no",         # ✅ Tavsiye edilir
+            #evaluation_strategy="no",   # ✅ ZORUNLU
+            #save_strategy="no",         # ✅ Tavsiye edilir
         )
 
         trainer = Trainer(
