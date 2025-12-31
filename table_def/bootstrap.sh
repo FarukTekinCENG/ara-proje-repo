@@ -14,17 +14,9 @@ CREATE DATABASE postgres;
 EOF
 
 echo "Schema uygulanıyor..."
-sudo -u postgres psql postgres < schema.sql
+sudo -u postgres psql postgres < job_postings.sql
 
-echo "CSV import ediliyor..."
-sudo -u postgres psql postgres <<EOF
-\copy job_postings FROM '/content/postings.csv' WITH (
-    FORMAT csv,
-    HEADER true,
-    DELIMITER ',',
-    QUOTE '"'
-);
-EOF
+echo "Train-Test Split..."
+sudo -u python -m scripts.split_pool --fraction 0.2 --seed 42 --yes
 
 echo "Bootstrap tamamlandı."
-

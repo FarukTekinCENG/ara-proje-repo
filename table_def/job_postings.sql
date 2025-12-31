@@ -32,7 +32,14 @@ CREATE TABLE job_postings (
     fips                        TEXT
 );
 
--- import dataset csv file
+\copy job_postings
+FROM '/tmp/postings.csv'
+WITH (
+    FORMAT csv,
+    HEADER true,
+    DELIMITER ',',
+    QUOTE '"'
+);
 
 ALTER TABLE job_postings
     ADD COLUMN id BIGSERIAL PRIMARY KEY;
@@ -51,12 +58,6 @@ CREATE TABLE pool (
         ON DELETE CASCADE
 );
 
--- gercek senaryoda (id ve description)
-INSERT INTO pool (id, description)
-SELECT id, description
-FROM job_postings;
-
--- development amacli hazir etiketle kaydet (id, label ve description)
 INSERT INTO pool (id, label, description)
 SELECT id, formatted_work_type, description
 FROM job_postings;
