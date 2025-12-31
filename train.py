@@ -115,15 +115,10 @@ class JobClassifierTrainer:
     # --------------------------------------------------
     # SAVE MODEL
     # --------------------------------------------------
-    def save_model(self, output_dir, trainer=None):
+    def save_model(self, output_dir):
         os.makedirs(output_dir, exist_ok=True)
 
-        # Eğer HF Trainer verildiyse onu kullan
-        if trainer is not None:
-            trainer.save_model(output_dir)
-        else:
-            self.model.save_pretrained(output_dir)
-
+        self.model.save_pretrained(output_dir)
         self.tokenizer.save_pretrained(output_dir)
 
         if self.label_encoder:
@@ -133,6 +128,7 @@ class JobClassifierTrainer:
             )
 
         print(f"Model saved to {output_dir}")
+
 
     # --------------------------------------------------
     # TOKENIZATION
@@ -313,21 +309,25 @@ class JobClassifierTrainer:
 
         return torch.tensor(weights, dtype=torch.float)
 
-
 class WeightedLossTrainer(Trainer):
     def __init__(self, class_weights=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.class_weights = class_weights
 
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(
+        self,
+        model,
+        inputs,
+        return_outputs=False,
+        **kwargs,   # 🔥 kritik
+    ):
         labels = inputs.pop("labels")
         outputs = model(**inputs)
         logits = outputs.logits
 
-        if self.class_weights is not None:
-            loss_fct = CrossEntropyLoss(weight=self.class_weights)
-        else:
-            loss_fct = CrossEntropyLoss()
+        loss_fct = CrossEntropyLoss(
+            weight=self.class_weights
+        ) if self.class_weights is not None else CrossEntropyLoss()
 
         loss = loss_fct(
             logits.view(-1, logits.size(-1)),

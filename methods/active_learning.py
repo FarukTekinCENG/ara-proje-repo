@@ -14,9 +14,9 @@ import re
 import shutil
 
 # ⚙️ CONFIGURABLE PARAMETERS
-MAX_SAMPLES = 1000
-TEST_SAMPLE_LIMIT = 2000
-BASE_TRAIN_SIZE = 100
+MAX_SAMPLES = 100
+TEST_SAMPLE_LIMIT = 200
+BASE_TRAIN_SIZE = 10
 
 class ActiveLearning:
     hyper_params = {
@@ -174,7 +174,8 @@ class ActiveLearning:
         )
 
         # 6. Save
-        trainer.save_model(base_dir, transformers_trainer)
+        #trainer.save_model(base_dir, transformers_trainer)
+        trainer.save_model(base_dir)
 
         print(f"Base classifier trained (encoder frozen) and saved to {base_dir}")
 
@@ -240,8 +241,9 @@ class ActiveLearning:
         # Save into provided save_dir (create if missing)
         save_dir = save_dir or "./fine_tuned_eurobert"
         os.makedirs(save_dir, exist_ok=True)
-        trainer.save_model(save_dir, transformers_trainer)
-        
+        #trainer.save_model(save_dir, transformers_trainer)
+        trainer.save_model(save_dir)
+
         # Return both the custom trainer and the transformers trainer
         return trainer, transformers_trainer
     
