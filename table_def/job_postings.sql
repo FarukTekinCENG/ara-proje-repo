@@ -57,3 +57,5 @@ CREATE TABLE pool (
 INSERT INTO pool (id, label, description)
 SELECT id, formatted_work_type, description
 FROM job_postings;
+
+ALTER USER postgres PASSWORD 'postgres';
