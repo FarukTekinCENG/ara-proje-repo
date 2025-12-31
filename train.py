@@ -11,7 +11,9 @@ from transformers import (
     TrainingArguments,
 )
 from sklearn.metrics import accuracy_score
-
+from collections import Counter
+from torch.nn import CrossEntropyLoss
+from transformers import Trainer
 
 # pytorch optimizasyonları
 torch.backends.cudnn.benchmark = True
@@ -262,15 +264,31 @@ class JobClassifierTrainer:
             bf16=bf16,
         )
 
-        trainer = Trainer(
+        # trainer = Trainer(
+        #     model=self.model,
+        #     args=training_args,
+        #     train_dataset=train_dataset,
+        #     #eval_dataset=eval_dataset,  # None olabilir, sorun yok
+        #     tokenizer=self.tokenizer,
+        #     #compute_metrics=self.compute_metrics if eval_dataset is not None else None,
+        # )
+        
+        # class weights hesapla
+        labels = train_dataset["label"]
+        class_weights = JobClassifierTrainer.compute_class_weights_from_labels(
+            labels,
+            num_labels=self.num_labels
+        ).to(self.model.device)
+
+        trainer = WeightedLossTrainer(
             model=self.model,
             args=training_args,
             train_dataset=train_dataset,
-            #eval_dataset=eval_dataset,  # None olabilir, sorun yok
             tokenizer=self.tokenizer,
-            #compute_metrics=self.compute_metrics if eval_dataset is not None else None,
+            class_weights=class_weights,
         )
 
+        #
         trainer.train()
         return trainer
 
@@ -281,3 +299,39 @@ class JobClassifierTrainer:
         return {
             "accuracy": accuracy_score(labels, predictions)
         }
+    
+    @staticmethod
+    def compute_class_weights_from_labels(encoded_labels, num_labels):
+        counts = Counter(encoded_labels)
+        total = sum(counts.values())
+
+        weights = []
+        for i in range(num_labels):
+            # hiç yoksa çok büyük ceza
+            w = total / counts[i] if i in counts else total
+            weights.append(w)
+
+        return torch.tensor(weights, dtype=torch.float)
+
+
+class WeightedLossTrainer(Trainer):
+    def __init__(self, class_weights=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.class_weights = class_weights
+
+    def compute_loss(self, model, inputs, return_outputs=False):
+        labels = inputs.pop("labels")
+        outputs = model(**inputs)
+        logits = outputs.logits
+
+        if self.class_weights is not None:
+            loss_fct = CrossEntropyLoss(weight=self.class_weights)
+        else:
+            loss_fct = CrossEntropyLoss()
+
+        loss = loss_fct(
+            logits.view(-1, logits.size(-1)),
+            labels.view(-1)
+        )
+
+        return (loss, outputs) if return_outputs else loss
