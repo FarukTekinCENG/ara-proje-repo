@@ -1,3 +1,6 @@
+DROP SCHEMA public CASCADE;
+CREATE SCHEMA public;
+
 CREATE TABLE job_postings (
     job_id                      TEXT,
     company_name                TEXT,

@@ -12,6 +12,6 @@ echo "Schema uygulanıyor..."
 sudo -u postgres psql postgres < job_postings.sql
 
 echo "Train-Test Split..."
-sudo -u python -m scripts.split_pool --fraction 0.2 --seed 42 --yes
+python -m scripts.split_pool --fraction 0.2 --seed 42 --yes
 
 echo "Bootstrap tamamlandı."
