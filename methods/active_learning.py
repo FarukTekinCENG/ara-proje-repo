@@ -136,7 +136,7 @@ class ActiveLearning:
 
         # 1. Load labeled samples
         if source == "db":
-            samples = database.get_labelled_samples()[:train_size]
+            samples = database.get_labeled_samples(train_size)
         else:
             raise ValueError("Only DB source supported for base init")
 

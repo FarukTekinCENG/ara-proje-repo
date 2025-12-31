@@ -464,35 +464,41 @@ class database:
                 cursor.execute(query)
                 return cursor.fetchall()
 
-    # @staticmethod
-    # def get_labelled_samples():
-    #     """
-    #     Etiketli örnekleri döner (eğitim için)
-    #     """
-    #     query = """
-    #         SELECT id, description, label
-    #         FROM pool
-    #         WHERE is_labelled = 'TRUE'
-    #           AND description IS NOT NULL
-    #           AND label IS NOT NULL
-    #         ORDER BY id;
-    #     """
-    #     with database.get_db_connection() as conn:
-    #         with conn.cursor() as cursor:
-    #             cursor.execute(query)
-    #             return cursor.fetchall()
     @staticmethod
     def get_labelled_samples():
         """
-        Etiketli örnekleri döner (label IS NOT NULL esas alınır)
+        Etiketli örnekleri döner (eğitim için)
         """
         query = """
             SELECT id, description, label
             FROM pool
-            WHERE label IS NOT NULL
-            AND description IS NOT NULL
+            WHERE is_labelled = 'TRUE'
+              AND description IS NOT NULL
+              AND label IS NOT NULL
             ORDER BY id;
         """
+        with database.get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query)
+                return cursor.fetchall()
+
+    @staticmethod
+    def get_labeled_samples(limit=None):
+        """
+        Etiketli örnekleri döner (label IS NOT NULL esas alınır)
+        limit: int veya None, çekilecek maksimum kayıt sayısı
+        """
+        query = """
+            SELECT *
+            FROM pool
+            WHERE label IS NOT NULL
+            AND description IS NOT NULL
+            ORDER BY id
+        """
+        
+        if limit is not None:
+            query += f" LIMIT {int(limit)}"
+
         with database.get_db_connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(query)
