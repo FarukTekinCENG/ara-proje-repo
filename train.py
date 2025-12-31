@@ -235,7 +235,7 @@ class JobClassifierTrainer:
     # --------------------------------------------------
     # TRAIN
     # --------------------------------------------------
-    def train(self, train_dataset, eval_dataset):
+    def train(self, train_dataset, eval_dataset, num_train_epochs=7, learning_rate=2e-5):
         if self.model is None:
             self.initialize_model()
 
@@ -252,8 +252,8 @@ class JobClassifierTrainer:
             per_device_train_batch_size=16,
             per_device_eval_batch_size=16,
             gradient_accumulation_steps=1,
-            num_train_epochs=7,                         # 1 AZ > 3-5 OLMALI
-            learning_rate=2e-5,
+            num_train_epochs=num_train_epochs,                         # 1 AZ > 3-5 OLMALI
+            learning_rate=learning_rate,
             weight_decay=0.01,
             logging_steps=50,
             remove_unused_columns=False,

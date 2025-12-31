@@ -22,7 +22,7 @@ class ActiveLearning:
     hyper_params = {
         "N": 100,         # number of samples selected each iteration
         "I": 0.001,     # improvement threshold
-        "T": 0.1,        # model prediction certainty threshold
+        "T": 0.001,        # model prediction un-certainty threshold
         "max_iterations": 20,  # maximum number of iterations
         "succcess_rate_threshold": 0.85,  # desired accuracy to stop
     }
@@ -128,7 +128,8 @@ class ActiveLearning:
         source="db",
     ):
         """
-        Initialize AND train base classifier with a fixed number of labeled samples.
+        Initialize AND train base classifier with MINIMAL task adaptation.
+        Encoder is frozen. Only classification head is trained.
         """
 
         base_dir = base_dir or ActiveLearning.BASE_DIR
@@ -142,7 +143,7 @@ class ActiveLearning:
         else:
             raise ValueError("Only DB source supported for base init")
 
-        if not samples or len(samples) == 0:
+        if not samples:
             raise RuntimeError("No labeled samples found for base classifier initialization")
 
         # 2. Create trainer
@@ -150,6 +151,9 @@ class ActiveLearning:
 
         # 3. Initialize model (fresh)
         trainer.initialize_model()
+
+        # 🔒 🔴 KRİTİK ADIM: ENCODER'I DONDUR
+        freeze_encoder(trainer.model)
 
         # 4. Prepare dataset
         train_ds, _ = trainer.prepare_datasets_from_tuples(
@@ -161,15 +165,39 @@ class ActiveLearning:
 
         print(f"Base classifier training on {len(train_ds)} samples")
 
-        # 5. Train
-        transformers_trainer = trainer.train(train_ds, None)
+        # 5. Train — ⚠️ SADECE 1 EPOCH
+        transformers_trainer = trainer.train(
+            train_ds,
+            None,
+            num_train_epochs=1,      # ⬅️ MIN
+            learning_rate=5e-5,      # ⬅️ head için biraz yüksek
+        )
 
         # 6. Save
         trainer.save_model(base_dir, transformers_trainer)
 
-        print(f"Base classifier trained and saved to {base_dir}")
+        print(f"Base classifier trained (encoder frozen) and saved to {base_dir}")
 
         return trainer
+
+    def freeze_encoder(model):
+        """
+        Freeze all encoder parameters, keep classification head trainable.
+        """
+        # HF modellerinde encoder genelde base_model veya bert/roberta altında olur
+        if hasattr(model, "base_model"):
+            encoder = model.base_model
+        elif hasattr(model, "bert"):
+            encoder = model.bert
+        elif hasattr(model, "roberta"):
+            encoder = model.roberta
+        else:
+            raise RuntimeError("Encoder not found in model")
+
+        for param in encoder.parameters():
+            param.requires_grad = False
+
+        print("🔒 Encoder frozen (classification head only)")
 
     @staticmethod
     def train_iterate(samples, source_model_dir=None, save_dir=None, previous_trainer=None):
