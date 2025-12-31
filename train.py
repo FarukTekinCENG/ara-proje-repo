@@ -49,12 +49,32 @@ class JobClassifierTrainer:
                 fix_mistral_regex=True
             )
 
+        # if self.model is None:
+        #     self.model = AutoModelForSequenceClassification.from_pretrained(
+        #         self.model_name,
+        #         num_labels=self.num_labels,
+        #         trust_remote_code=True
+        #     )
         if self.model is None:
             self.model = AutoModelForSequenceClassification.from_pretrained(
                 self.model_name,
                 num_labels=self.num_labels,
-                trust_remote_code=True
+                trust_remote_code=True,
+                ignore_mismatched_sizes=True
             )
+
+            # 🔴 SEÇENEK A: classification head'i bilinçli şekilde sıfırla
+            if hasattr(self.model, "classifier"):
+                self.model.classifier.reset_parameters()
+                print("⚠️ Base classifier: classification head reset")
+            elif hasattr(self.model, "score"):
+                self.model.score.reset_parameters()
+                print("⚠️ Base classifier: score head reset")
+            else:
+                raise RuntimeError(
+                    "Classification head not found. "
+                    "Unexpected model architecture."
+                )
 
         # 🔒 LABEL ENCODER SADECE BURADA FIT EDİLİR
         if self.label_encoder is None:

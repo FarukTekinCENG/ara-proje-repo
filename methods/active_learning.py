@@ -13,8 +13,10 @@ from data_utils.database import database
 import re
 import shutil
 
-# ⚙️ CONFIG: Diversity sampling için max_samples değerini buradan değiştirin
+# ⚙️ CONFIGURABLE PARAMETERS
 MAX_SAMPLES = 1000
+TEST_SAMPLE_LIMIT = 2000
+BASE_TRAIN_SIZE = 100
 
 class ActiveLearning:
     hyper_params = {
@@ -517,7 +519,10 @@ class ActiveLearning:
                     pass
 
     @staticmethod
-    def run(function_algorithm, max_samples=None, test_samples=None, test_sample_limit=1000, test_from_db=True, base_train_size=20):
+    def run(function_algorithm, max_samples=None, test_samples=None, test_sample_limit=TEST_SAMPLE_LIMIT, test_from_db=True, base_train_size=BASE_TRAIN_SIZE):
+        # tum set
+        all_labeled_samples = []
+
         # Ensure base classifier exists
         os.makedirs(ActiveLearning.RUNS_BASE, exist_ok=True)
         if not os.path.exists(ActiveLearning.BASE_DIR):
@@ -693,12 +698,14 @@ class ActiveLearning:
 
             # ara adim: veriyi etiketle
             labeled_samples = ActiveLearning.prep_labels(selected_samples)
+            all_labeled_samples.extend(labeled_samples)
+            print(f"Total labeled samples so far: {len(all_labeled_samples)}")
 
             # 3. Modeli eğit / güncelle
             # Train and save into the run-specific model folder (overwrite each iteration)
             try:
                 trainer_obj, transformers_trainer = ActiveLearning.train_iterate(
-                    labeled_samples,
+                    all_labeled_samples, #labeled_samples,
                     source_model_dir=current_model_dir,
                     save_dir=run_model_dir,
                 )
