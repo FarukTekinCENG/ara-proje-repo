@@ -10,6 +10,7 @@ sys.path.insert(0, parent_dir)
 from train import JobClassifierTrainer
 from model import ModelPredictor
 from utils.database import database
+from utils.metrics import compute_minority_metrics
 import re
 import shutil
 
@@ -761,6 +762,37 @@ class ActiveLearning:
                     print(f"Evaluating on test set ({len(test_samples)} samples)...")
                     new_accuracy = ActiveLearning.evaluate_on_test_set(trainer_obj, test_samples)
                     print(f"Test accuracy: {new_accuracy}")
+
+                    # === Minority Recall + Macro-F1 ===
+                    try:
+                        # test dataset'i tekrar hazırla (predict için)
+                        test_ds, _ = trainer_obj.prepare_datasets_from_tuples(
+                            test_samples,
+                            description_index=1,
+                            label_index=3,
+                            split=False,
+                        )
+
+                        predictions = trainer_obj.trainer.predict(test_ds)
+                        logits = predictions.predictions
+                        labels = predictions.label_ids
+
+                        macro_f1, minority_recalls = compute_minority_metrics(
+                            logits,
+                            labels,
+                            trainer_obj.label_encoder
+                        )
+
+                        print(
+                            f"[ITER {iteration}] macro_f1={macro_f1:.4f} "
+                            f"minority_recalls={minority_recalls}"
+                        )
+
+                    except Exception as e:
+                        print(f"Warning: minority metrics computation failed: {e}")
+                        macro_f1 = None
+                        minority_recalls = {}
+
                 except Exception as e:
                     print(f"Warning: Evaluation failed: {e}")
                     new_accuracy = None
@@ -788,7 +820,15 @@ class ActiveLearning:
             try:
                 scores = database.get_all_uncertainty_scores()
                 avg_uncertainty = sum([float(x) for x in scores]) / len(scores) if scores else None
-                metrics = {"accuracy": new_accuracy, "avg_uncertainty": avg_uncertainty} if base_accuracy is not None else {"avg_uncertainty": avg_uncertainty}
+                #metrics = {"accuracy": new_accuracy, "avg_uncertainty": avg_uncertainty} if base_accuracy is not None else {"avg_uncertainty": avg_uncertainty}
+                metrics = {
+                    "accuracy": new_accuracy,
+                    "avg_uncertainty": avg_uncertainty,
+                    "macro_f1": macro_f1,
+                    "recall_internship": minority_recalls.get("Internship", 0.0),
+                    "recall_temporary": minority_recalls.get("Temporary", 0.0),
+                    "recall_volunteer": minority_recalls.get("Volunteer", 0.0),
+                }
                 params = {
                     "run_model_dir": run_model_dir,
                     "test_folder": test_folder,
