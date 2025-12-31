@@ -4,7 +4,7 @@ Usage:
   python scripts/split_pool.py --fraction 0.2 --seed 42 [--yes]
 """
 import argparse
-from data_utils.database import database
+from utils.database import database
 
 
 def main():

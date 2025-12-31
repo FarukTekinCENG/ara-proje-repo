@@ -6,7 +6,7 @@ parent_dir = os.path.dirname(current_dir)
 sys.path.insert(0, parent_dir)
 
 from train import JobClassifierTrainer
-from data_utils.database import database
+from utils.database import database
 import re
 
 # ⚙️ CONFIG: Diversity sampling için max_samples değerini buradan değiştirin

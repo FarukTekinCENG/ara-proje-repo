@@ -9,7 +9,7 @@ sys.path.insert(0, parent_dir)
 
 from train import JobClassifierTrainer
 from model import ModelPredictor
-from data_utils.database import database
+from utils.database import database
 import re
 import shutil
 
@@ -212,6 +212,9 @@ class ActiveLearning:
         else:
             trainer.initialize_model()
         
+        # MODEL ADI
+        trainer.model_name = os.path.basename(source_model_dir.rstrip("/"))
+
         # DEBUG: Check what we have in samples
         if samples and len(samples) > 0:
             print(f"DEBUG: Number of samples for training: {len(samples)}")
@@ -793,7 +796,7 @@ class ActiveLearning:
                     "method": method_name,
                     "DATA_SIZE": data_size,
                 }
-
+                
                 try:
                     # Try remote insert (requires NEON_API_KEY or DATABASE_URL in env)
                     inserted_id = database.insert_test_result_remote(
