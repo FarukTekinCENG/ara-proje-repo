@@ -14,13 +14,13 @@ import re
 import shutil
 
 # ⚙️ CONFIG: Diversity sampling için max_samples değerini buradan değiştirin
-MAX_SAMPLES = 5000
+MAX_SAMPLES = 10000
 
 class ActiveLearning:
     hyper_params = {
         "N": 300,         # number of samples selected each iteration
         "I": 0.001,     # improvement threshold
-        "T": 0.1,        # model prediction certainty threshold
+        "T": 0.05,        # model prediction certainty threshold
         "max_iterations": 30,  # maximum number of iterations
         "succcess_rate_threshold": 0.9,  # desired accuracy to stop
     }
@@ -118,6 +118,56 @@ class ActiveLearning:
             database.update_labelled_sample(sample_id, predicted_label)
 
         return samples
+
+    @staticmethod
+    def initialize_and_train_base_classifier(
+        train_size=500,
+        base_dir=None,
+        source="db",
+    ):
+        """
+        Initialize AND train base classifier with a fixed number of labeled samples.
+        """
+
+        base_dir = base_dir or ActiveLearning.BASE_DIR
+        os.makedirs(base_dir, exist_ok=True)
+
+        print(f"Initializing base classifier with {train_size} samples")
+
+        # 1. Load labeled samples
+        if source == "db":
+            samples = database.get_labeled_samples(limit=train_size)
+        else:
+            raise ValueError("Only DB source supported for base init")
+
+        if not samples or len(samples) == 0:
+            raise RuntimeError("No labeled samples found for base classifier initialization")
+
+        # 2. Create trainer
+        trainer = JobClassifierTrainer()
+
+        # 3. Initialize model (fresh)
+        trainer.initialize_model()
+
+        # 4. Prepare dataset
+        train_ds, _ = trainer.prepare_datasets_from_tuples(
+            samples,
+            description_index=1,
+            label_index=3,
+            split=False,
+        )
+
+        print(f"Base classifier training on {len(train_ds)} samples")
+
+        # 5. Train
+        transformers_trainer = trainer.train(train_ds, None)
+
+        # 6. Save
+        trainer.save_model(base_dir, transformers_trainer)
+
+        print(f"Base classifier trained and saved to {base_dir}")
+
+        return trainer
 
     @staticmethod
     def train_iterate(samples, source_model_dir=None, save_dir=None, previous_trainer=None):
@@ -471,10 +521,12 @@ class ActiveLearning:
         # Ensure base classifier exists
         os.makedirs(ActiveLearning.RUNS_BASE, exist_ok=True)
         if not os.path.exists(ActiveLearning.BASE_DIR):
-            print("Base classifier not found. Creating base classifier...")
-            base_trainer = JobClassifierTrainer()
-            base_trainer.initialize_model()
-            base_trainer.save_model(ActiveLearning.BASE_DIR)
+            print("Base classifier not found. Initializing and training...")
+
+            ActiveLearning.initialize_and_train_base_classifier(
+                train_size=50,          # 🔧 PARAMETRE
+                base_dir=ActiveLearning.BASE_DIR,
+            )
 
         # Ensure committee member local paths exist: copy base classifier into missing local dirs
         for m in ActiveLearning.model_list:
