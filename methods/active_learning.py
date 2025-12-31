@@ -14,14 +14,14 @@ import re
 import shutil
 
 # ⚙️ CONFIG: Diversity sampling için max_samples değerini buradan değiştirin
-MAX_SAMPLES = 10000
+MAX_SAMPLES = 1000
 
 class ActiveLearning:
     hyper_params = {
-        "N": 300,         # number of samples selected each iteration
+        "N": 100,         # number of samples selected each iteration
         "I": 0.001,     # improvement threshold
         "T": 0.05,        # model prediction certainty threshold
-        "max_iterations": 30,  # maximum number of iterations
+        "max_iterations": 20,  # maximum number of iterations
         "succcess_rate_threshold": 0.9,  # desired accuracy to stop
     }
     BASE_DIR = "./base_classifier"
@@ -136,7 +136,7 @@ class ActiveLearning:
 
         # 1. Load labeled samples
         if source == "db":
-            samples = database.get_labeled_samples(limit=train_size)
+            samples = database.get_labelled_samples()[:train_size]
         else:
             raise ValueError("Only DB source supported for base init")
 
@@ -517,14 +517,14 @@ class ActiveLearning:
                     pass
 
     @staticmethod
-    def run(function_algorithm, max_samples=None, test_samples=None, test_sample_limit=2000, test_from_db=True):
+    def run(function_algorithm, max_samples=None, test_samples=None, test_sample_limit=1000, test_from_db=True, base_train_size=20):
         # Ensure base classifier exists
         os.makedirs(ActiveLearning.RUNS_BASE, exist_ok=True)
         if not os.path.exists(ActiveLearning.BASE_DIR):
             print("Base classifier not found. Initializing and training...")
 
             ActiveLearning.initialize_and_train_base_classifier(
-                train_size=50,          # 🔧 PARAMETRE
+                train_size=base_train_size,          # 🔧 PARAMETRE
                 base_dir=ActiveLearning.BASE_DIR,
             )
 
