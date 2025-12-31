@@ -647,7 +647,9 @@ class ActiveLearning:
 
         # --- Remote DB insert (aynı muamele) ---
         try:
-            metrics = {"accuracy": base_accuracy} if base_accuracy is not None else None
+            scores = database.get_all_uncertainty_scores()
+            avg_uncertainty = sum([float(x) for x in scores]) / len(scores) if scores else None
+            metrics = {"accuracy": base_accuracy, "avg_uncertainty": avg_uncertainty} if base_accuracy is not None else {"avg_uncertainty": avg_uncertainty}
             params = {
                 "run_model_dir": ActiveLearning.BASE_DIR,
                 "test_folder": test_folder,
@@ -743,7 +745,9 @@ class ActiveLearning:
 
             # 7. Save result to Postgres: prefer remote (Neon) for results, fallback to local
             try:
-                metrics = {"accuracy": new_accuracy} if new_accuracy is not None else None
+                scores = database.get_all_uncertainty_scores()
+                avg_uncertainty = sum([float(x) for x in scores]) / len(scores) if scores else None
+                metrics = {"accuracy": base_accuracy, "avg_uncertainty": avg_uncertainty} if base_accuracy is not None else {"avg_uncertainty": avg_uncertainty}
                 params = {
                     "run_model_dir": run_model_dir,
                     "test_folder": test_folder,
