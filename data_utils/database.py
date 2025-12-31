@@ -464,17 +464,33 @@ class database:
                 cursor.execute(query)
                 return cursor.fetchall()
 
+    # @staticmethod
+    # def get_labelled_samples():
+    #     """
+    #     Etiketli örnekleri döner (eğitim için)
+    #     """
+    #     query = """
+    #         SELECT id, description, label
+    #         FROM pool
+    #         WHERE is_labelled = 'TRUE'
+    #           AND description IS NOT NULL
+    #           AND label IS NOT NULL
+    #         ORDER BY id;
+    #     """
+    #     with database.get_db_connection() as conn:
+    #         with conn.cursor() as cursor:
+    #             cursor.execute(query)
+    #             return cursor.fetchall()
     @staticmethod
     def get_labelled_samples():
         """
-        Etiketli örnekleri döner (eğitim için)
+        Etiketli örnekleri döner (label IS NOT NULL esas alınır)
         """
         query = """
             SELECT id, description, label
             FROM pool
-            WHERE is_labelled = 'TRUE'
-              AND description IS NOT NULL
-              AND label IS NOT NULL
+            WHERE label IS NOT NULL
+            AND description IS NOT NULL
             ORDER BY id;
         """
         with database.get_db_connection() as conn:
