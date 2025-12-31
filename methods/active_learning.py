@@ -20,9 +20,9 @@ class ActiveLearning:
     hyper_params = {
         "N": 100,         # number of samples selected each iteration
         "I": 0.001,     # improvement threshold
-        "T": 0.05,        # model prediction certainty threshold
+        "T": 0.1,        # model prediction certainty threshold
         "max_iterations": 20,  # maximum number of iterations
-        "succcess_rate_threshold": 0.9,  # desired accuracy to stop
+        "succcess_rate_threshold": 0.85,  # desired accuracy to stop
     }
     BASE_DIR = "./base_classifier"
     RUNS_BASE = "./tests"

@@ -217,7 +217,17 @@ class database:
         RETURNING id;
         """
 
-        metrics_json = json.dumps(metrics) if metrics is not None else None
+        # metrics_json = json.dumps(metrics) if metrics is not None else None
+
+        if metrics is None:
+            metrics = {}
+        try:
+            scores = database.get_all_uncertainty_scores()
+            metrics['avg_uncertainty'] = sum(scores) / len(scores) if scores else None
+        except Exception:
+            metrics['avg_uncertainty'] = None
+
+        metrics_json = json.dumps(metrics)
         params_json = json.dumps(params) if params is not None else None
 
         with psycopg2.connect(dsn) as conn:
