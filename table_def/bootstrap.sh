@@ -8,11 +8,6 @@ apt-get install -y postgresql postgresql-contrib
 echo "Postgres servisi başlatılıyor..."
 service postgresql start
 
-echo "Database oluşturuluyor..."
-sudo -u postgres psql <<EOF
-CREATE DATABASE postgres;
-EOF
-
 echo "Schema uygulanıyor..."
 sudo -u postgres psql postgres < job_postings.sql
 

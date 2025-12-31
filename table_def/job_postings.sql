@@ -32,14 +32,7 @@ CREATE TABLE job_postings (
     fips                        TEXT
 );
 
-\copy job_postings
-FROM '/tmp/postings.csv'
-WITH (
-    FORMAT csv,
-    HEADER true,
-    DELIMITER ',',
-    QUOTE '"'
-);
+\copy job_postings FROM '/tmp/postings.csv' WITH (FORMAT csv, HEADER true, DELIMITER ',', QUOTE '"');
 
 ALTER TABLE job_postings
     ADD COLUMN id BIGSERIAL PRIMARY KEY;
