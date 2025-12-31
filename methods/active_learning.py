@@ -153,7 +153,7 @@ class ActiveLearning:
         trainer.initialize_model()
 
         # 🔒 🔴 KRİTİK ADIM: ENCODER'I DONDUR
-        freeze_encoder(trainer.model)
+        ActiveLearning.freeze_encoder(trainer.model)
 
         # 4. Prepare dataset
         train_ds, _ = trainer.prepare_datasets_from_tuples(
@@ -180,6 +180,7 @@ class ActiveLearning:
 
         return trainer
 
+    @staticmethod
     def freeze_encoder(model):
         """
         Freeze all encoder parameters, keep classification head trainable.
