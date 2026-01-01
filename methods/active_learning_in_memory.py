@@ -8,6 +8,13 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.insert(0, parent_dir)
 
+# Ensure the local CSV dataset is class-balanced before initializing the in-memory DB
+try:
+    from utils.balanced_dataset import ensure_balanced_dataset
+    ensure_balanced_dataset()
+except Exception as e:
+    print(f"Warning: failed to ensure balanced dataset: {e}")
+
 from train import JobClassifierTrainer
 from model import ModelPredictor
 from utils.database_csv import database  # Database yerine RAMDatabase

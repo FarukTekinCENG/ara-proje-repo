@@ -53,14 +53,37 @@ class RAMDatabase:
         
         # Eğer CSV'den yükle
         if load_from_csv:
-            if self.data_csv_path and os.path.exists(self.data_csv_path):
+            balanced_csv_path = "./data/balanced_dataset.csv"
+            if os.path.exists(balanced_csv_path):
+                self.data_csv_path = balanced_csv_path
                 self.load_from_csv(self.data_csv_path)
             else:
-                # CSV yoksa indir
-                print(f"CSV file not found at {self.data_csv_path}. Downloading from HuggingFace...")
-                self.download_dataset()
-                if os.path.exists(self.data_csv_path):
+                if self.data_csv_path and os.path.exists(self.data_csv_path):
+                    try:
+                        from utils.balanced_dataset import ensure_balanced_dataset
+                        balanced_path = ensure_balanced_dataset(
+                            raw_csv_path=self.data_csv_path,
+                            balanced_csv_path=balanced_csv_path,
+                        )
+                        self.data_csv_path = balanced_path
+                    except Exception as e:
+                        print(f"Warning: failed to create balanced dataset: {e}")
                     self.load_from_csv(self.data_csv_path)
+                else:
+                    # CSV yoksa indir
+                    print(f"CSV file not found at {self.data_csv_path}. Downloading from HuggingFace...")
+                    self.download_dataset()
+                    if os.path.exists(self.data_csv_path):
+                        try:
+                            from utils.balanced_dataset import ensure_balanced_dataset
+                            balanced_path = ensure_balanced_dataset(
+                                raw_csv_path=self.data_csv_path,
+                                balanced_csv_path=balanced_csv_path,
+                            )
+                            self.data_csv_path = balanced_path
+                        except Exception as e:
+                            print(f"Warning: failed to create balanced dataset: {e}")
+                        self.load_from_csv(self.data_csv_path)
     
     @staticmethod
     def _load_env():
