@@ -22,8 +22,8 @@ except Exception as e:
     print(f"Warning: failed to print dataset info: {e}")
 
 # ⚙️ CONFIGURABLE PARAMETERS
-MAX_SAMPLES = 2800
-TEST_SAMPLE_LIMIT = 700
+MAX_SAMPLES = 3000
+TEST_SAMPLE_LIMIT = 500
 BASE_TRAIN_SIZE = 20
 
 class ActiveLearning:
@@ -31,8 +31,8 @@ class ActiveLearning:
         "N": 50,         # number of samples selected each iteration
         "T": 0.01,        # model prediction un-certainty threshold
         "T_patience": 3,  # stop if mean_uncertainty(selected_batch) < T for this many consecutive iterations
-        "label_budget": None,  # optional hard budget on total labelled samples used for training
-        "max_iterations": 40,  # maximum number of iterations
+        "label_budget": 1500, # None,  # optional hard budget on total labelled samples used for training
+        "max_iterations": 30,  # maximum number of iterations
         "stratified_batch": False,  # make per-iteration selected batch roughly class-balanced
         "seed": 42,
         "deterministic": True,
