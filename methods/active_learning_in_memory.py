@@ -691,13 +691,20 @@ class ActiveLearning:
                 valid_preds = [p for p in preds if p is not None]
                 if not valid_preds:
                     continue
-                    
-                distinct = len(set(valid_preds))
-                if pid in uncert_by_id:
-                    avg_unc = sum(uncert_by_id[pid]) / len(uncert_by_id[pid])
-                else:
-                    avg_unc = 0
-                scored.append((pid, (distinct, avg_unc)))
+
+                # Committee disagreement: vote entropy (higher => more disagreement)
+                counts = collections.Counter(valid_preds)
+                total = sum(counts.values())
+                vote_entropy = 0.0
+                if total > 0:
+                    for c in counts.values():
+                        p = c / total
+                        vote_entropy += -p * math.log(p + 1e-12)
+
+                # Tie-breaker: avg member uncertainty (if available)
+                avg_unc = (sum(uncert_by_id[pid]) / len(uncert_by_id[pid])) if pid in uncert_by_id and uncert_by_id[pid] else 0.0
+
+                scored.append((pid, (vote_entropy, avg_unc)))
 
             scored.sort(key=lambda x: (x[1][0], x[1][1]), reverse=True)
             selected_ids = [s[0] for s in scored[:N]]
@@ -706,10 +713,19 @@ class ActiveLearning:
                 return []
 
             # 5️⃣ Fetch full sample rows from database
+            # Attach committee disagreement score into returned tuple's uncertainty_score field.
+            disagreement_by_id = {pid: float(v[0]) for pid, v in scored}
             selected_samples = []
             for sample in database.pool:
                 if sample[0] in selected_ids:
-                    selected_samples.append(sample)
+                    try:
+                        sample_list = list(sample)
+                        # sample = (id, description, is_labelled, label, model_prediction, uncertainty_score)
+                        if len(sample_list) >= 6:
+                            sample_list[5] = disagreement_by_id.get(sample[0], sample_list[5])
+                        selected_samples.append(tuple(sample_list))
+                    except Exception:
+                        selected_samples.append(sample)
 
             return selected_samples
 
