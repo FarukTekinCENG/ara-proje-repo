@@ -31,6 +31,8 @@ class ActiveLearning:
         "N": 50,         # number of samples selected each iteration
         "T": 0.01,        # model prediction un-certainty threshold
         "T_patience": 3,  # stop if mean_uncertainty(selected_batch) < T for this many consecutive iterations
+        "uncertainty_plateau_eps": 0.01,  # stop if selected batch mean uncertainty stops decreasing (min drop)
+        "uncertainty_plateau_patience": 5,  # consecutive iterations with <eps improvement before stop
         "label_budget": 1500, # None,  # optional hard budget on total labelled samples used for training
         "max_iterations": 30,  # maximum number of iterations
         "stratified_batch": False,  # make per-iteration selected batch roughly class-balanced
@@ -458,12 +460,64 @@ class ActiveLearning:
         
     @staticmethod
     def check_stop_condition(test_folder, iteration, previous_accuracy=None, new_accuracy=None):
-        # Stop condition is handled in run() using:
-        # - budget (max_iterations / label_budget)
-        # - mean_uncertainty(selected_batch) < T with patience
-        # Keep this function minimal and backward-compatible.
-        if iteration >= ActiveLearning.hyper_params.get("max_iterations", 0):
+        """Stop condition checks using multiple criteria.
+
+        In-memory variant uses only:
+        - budget (label_budget / max_iterations)
+        - plateau on selected batch mean uncertainty (eps + patience)
+
+        Args:
+            test_folder: kept for API compatibility (unused)
+            iteration: current iteration counter
+            previous_accuracy/new_accuracy: kept for API compatibility (unused)
+        """
+        # Backward-compatible signature; actual stateful stop logic is evaluated from run()
+        # via attributes set on this function.
+        state = getattr(ActiveLearning, "_stop_state", None)
+        if not isinstance(state, dict):
+            return False, "continue"
+
+        labeled_count = int(state.get("labeled_count", 0) or 0)
+        selected_mean_uncertainty = state.get("selected_mean_uncertainty", None)
+
+        # --- Budget stops ---
+        max_it = ActiveLearning.hyper_params.get("max_iterations", 0)
+        if isinstance(max_it, int) and max_it > 0 and iteration >= max_it:
             return True, "max_iterations"
+
+        label_budget = ActiveLearning.hyper_params.get("label_budget")
+        if isinstance(label_budget, int) and label_budget > 0 and labeled_count >= label_budget:
+            return True, "label_budget"
+
+        # --- Plateau stop on selected-batch uncertainty ---
+        if selected_mean_uncertainty is None:
+            return False, "continue"
+
+        eps = ActiveLearning.hyper_params.get("uncertainty_plateau_eps", 0.0)
+        patience = ActiveLearning.hyper_params.get("uncertainty_plateau_patience", 1)
+        if not isinstance(eps, (int, float)):
+            eps = 0.0
+        if not isinstance(patience, int) or patience <= 0:
+            patience = 1
+
+        prev = state.get("prev_selected_unc")
+        streak = int(state.get("plateau_streak", 0) or 0)
+        if prev is not None:
+            try:
+                drop = float(prev) - float(selected_mean_uncertainty)
+            except Exception:
+                drop = 0.0
+            if drop < float(eps):
+                streak += 1
+            else:
+                streak = 0
+
+        state["prev_selected_unc"] = float(selected_mean_uncertainty)
+        state["plateau_streak"] = streak
+
+        if streak >= patience:
+            return True, "uncertainty_plateau"
+
         return False, "continue"
 
     @staticmethod
@@ -868,21 +922,19 @@ class ActiveLearning:
         # Base accuracy artık referans noktası
         previous_accuracy = base_accuracy
 
-        # Stop-state for uncertainty threshold with patience
-        below_t_streak = 0
+        # Stop-state for plateau on selected uncertainty
+        ActiveLearning._stop_state = {"prev_selected_unc": None, "plateau_streak": 0}
 
         while True:
             print(f"\n--- Iteration {iteration} ---")
+            # Update stop-state before checks
+            ActiveLearning._stop_state["labeled_count"] = len(all_labeled_samples)
+            ActiveLearning._stop_state["selected_mean_uncertainty"] = None
 
-            # Budget stops (hard constraints)
-            label_budget = ActiveLearning.hyper_params.get("label_budget")
-            if isinstance(label_budget, int) and label_budget > 0:
-                if len(all_labeled_samples) >= label_budget:
-                    print(f"Stopping: label budget reached ({label_budget})")
-                    break
-
-            if iteration >= ActiveLearning.hyper_params.get("max_iterations", 0):
-                print(f"Stopping: max_iterations reached ({ActiveLearning.hyper_params.get('max_iterations')})")
+            # Budget check via central stop function (no selected uncertainty yet)
+            stop, reason = ActiveLearning.check_stop_condition(test_folder, iteration, None, None)
+            if stop:
+                print(f"Stopping: {reason}")
                 break
             
             # 1. Model tahmini (use current_model_dir)
@@ -902,23 +954,21 @@ class ActiveLearning:
                     print(f"Warning: stratified batch selection failed: {e}")
             print(f"Selected {len(selected_samples)} samples for labeling")
 
-            # Uncertainty-threshold stop (mean uncertainty of selected batch)
+            # Selected-batch uncertainty (used for monitoring + plateau stop)
             mean_selected_unc = ActiveLearning.compute_mean_uncertainty_for_selected_samples(
                 selected_samples,
                 model_dir=current_model_dir,
             )
             if mean_selected_unc is not None:
-                print(f"[stop] mean_uncertainty(selected_batch)={mean_selected_unc:.6f}")
-                T = ActiveLearning.hyper_params.get("T", 0.0)
-                if mean_selected_unc < T:
-                    below_t_streak += 1
-                    patience = ActiveLearning.hyper_params.get("T_patience", 1)
-                    print(f"[stop] below T={T} streak: {below_t_streak}/{patience}")
-                    if below_t_streak >= patience:
-                        print("Stopping: T_threshold_reached (patience)")
-                        break
-                else:
-                    below_t_streak = 0
+                print(f"[signal] mean_uncertainty(selected_batch)={mean_selected_unc:.6f}")
+
+            # Plateau check via central stop function
+            ActiveLearning._stop_state["labeled_count"] = len(all_labeled_samples)
+            ActiveLearning._stop_state["selected_mean_uncertainty"] = mean_selected_unc
+            stop, reason = ActiveLearning.check_stop_condition(test_folder, iteration, None, None)
+            if stop:
+                print(f"Stopping: {reason}")
+                break
 
             # ara adim: veriyi etiketle
             labeled_samples = ActiveLearning.prep_labels(selected_samples)
@@ -1016,10 +1066,13 @@ class ActiveLearning:
             # 7. Save result - try remote first, then fallback to local RAM
             try:
                 scores = database.get_all_uncertainty_scores()
-                avg_uncertainty = sum([float(x) for x in scores]) / len(scores) if scores else None
+                avg_uncertainty_pool = sum([float(x) for x in scores]) / len(scores) if scores else None
                 metrics = {
                     "accuracy": new_accuracy,
-                    "avg_uncertainty": avg_uncertainty,
+                    # Backward-compatibility: avg_uncertainty remains pool-level.
+                    "avg_uncertainty": avg_uncertainty_pool,
+                    "avg_uncertainty_pool": avg_uncertainty_pool,
+                    "selected_samples_avg_uncertainty": mean_selected_unc,
                     "macro_f1": macro_f1,
                 }
                 
