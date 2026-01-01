@@ -3,98 +3,215 @@ import json
 import matplotlib.pyplot as plt
 from itertools import cycle
 import os
+import argparse
+from typing import Any, Dict, List, Optional
 
-# Excel dosyasını oku
-df = pd.read_excel("results/results.xlsx")
+def _safe_json_loads(x: Any) -> Dict[str, Any]:
+    if x is None or (isinstance(x, float) and pd.isna(x)):
+        return {}
+    if isinstance(x, dict):
+        return x
+    s = str(x)
+    if not s or s.lower() == "nan":
+        return {}
+    try:
+        return json.loads(s)
+    except Exception:
+        # Some exports may double-quote JSON; try a second pass.
+        try:
+            return json.loads(s.replace("''", "'"))
+        except Exception:
+            return {}
 
-# metrics sütununu dict olarak al
-df['metrics_dict'] = df['metrics'].apply(json.loads)
 
-# Kayıt dizini
-output_dir = "graphs"
-os.makedirs(output_dir, exist_ok=True)
+def _read_results(path: str) -> pd.DataFrame:
+    ext = os.path.splitext(path)[1].lower()
+    if ext in {".xlsx", ".xls"}:
+        return pd.read_excel(path)
+    if ext in {".csv"}:
+        return pd.read_csv(path)
+    if ext in {".tsv"}:
+        return pd.read_csv(path, sep="\t")
+    # Fallback: try tab-separated then comma
+    try:
+        return pd.read_csv(path, sep="\t")
+    except Exception:
+        return pd.read_csv(path)
 
-# Grafikleri saklamak için liste
-graphs = []
-current_graph = []
 
-# Veriyi gruplama: base_classifier ile yeni grafiğe başla
-for _, row in df.iterrows():
-    if row['method'] == 'base_classifier':
-        if current_graph:
-            graphs.append(current_graph)
-        current_graph = []
-    current_graph.append({
-        'method': row['method'],
-        'model_name': row['model_name'],
-        'train_data_size': row['train_data_size'],
-        'data_size': row['data_size'],
-        'accuracy': row['metrics_dict'].get('accuracy') * 100 if row['metrics_dict'].get('accuracy') else None,
-        'avg_uncertainty': row['metrics_dict'].get('avg_uncertainty')
-    })
+def _split_into_tests(df: pd.DataFrame) -> List[pd.DataFrame]:
+    tests: List[pd.DataFrame] = []
+    current_rows: List[int] = []
 
-if current_graph:
-    graphs.append(current_graph)
+    method_col = "method" if "method" in df.columns else None
+    if method_col is None:
+        return [df]
 
-# Grafikleri çiz ve kaydet
-for idx, graph_data in enumerate(graphs, 1):
-    x_values = list(range(len(graph_data)))
-    
-    # Renk döngüsü diğer yöntemler için
-    colors = cycle(['green', 'blue'])
-    
-    # Accuracy grafiği
-    plt.figure(figsize=(12,5))
+    for idx, row in df.iterrows():
+        if str(row.get(method_col)) == "base_classifier":
+            if current_rows:
+                tests.append(df.loc[current_rows].reset_index(drop=True))
+            current_rows = [idx]
+        else:
+            if not current_rows:
+                current_rows = [idx]
+            else:
+                current_rows.append(idx)
+
+    if current_rows:
+        tests.append(df.loc[current_rows].reset_index(drop=True))
+
+    return tests
+
+
+def _plot_metric(
+    test_idx: int,
+    test_df: pd.DataFrame,
+    metric: str,
+    output_dir: str,
+    accuracy_percent: bool,
+) -> Optional[str]:
+    if "metrics_dict" not in test_df.columns:
+        return None
+
+    x_col = None
+    if "iteration_no" in test_df.columns:
+        x_col = "iteration_no"
+    elif "train_data_size" in test_df.columns:
+        x_col = "train_data_size"
+
+    x_values = (
+        test_df[x_col].tolist()
+        if x_col is not None
+        else list(range(len(test_df)))
+    )
+
+    y_values: List[Optional[float]] = []
+    for d in test_df["metrics_dict"].tolist():
+        val = None
+        if isinstance(d, dict):
+            val = d.get(metric)
+        if metric == "accuracy" and val is not None and accuracy_percent:
+            try:
+                val = float(val) * 100.0
+            except Exception:
+                pass
+        y_values.append(val)
+
+    if all(v is None or (isinstance(v, float) and pd.isna(v)) for v in y_values):
+        return None
+
+    plt.figure(figsize=(12, 5))
+
+    colors = cycle(["green", "blue", "purple", "orange", "brown", "gray"])
     used_labels = set()
-    for i, entry in enumerate(graph_data):
-        if entry['method'] == 'base_classifier':
-            color = 'red'
+    for i, row in test_df.iterrows():
+        method = str(row.get("method", ""))
+        model_name = str(row.get("model_name", ""))
+        train_data_size = row.get("train_data_size", None)
+        data_size = row.get("data_size", None)
+
+        if method == "base_classifier":
+            color = "red"
         else:
             color = next(colors)
-        plt.scatter(x_values[i], entry['accuracy'], color=color, s=80, edgecolor='black', zorder=3)
-        
-        # Legend etiketi oluştur
-        label = f"{entry['model_name']} | method={entry['method']} | train_data_size={entry['train_data_size']} | data_size={entry['data_size']}"
-        if label not in used_labels:
-            plt.scatter([], [], color=color, label=label)  # boş scatter ile legend ekle
-            used_labels.add(label)
-    
-    # Noktaları birleştiren siyah çizgi
-    y_values = [entry['accuracy'] for entry in graph_data]
-    plt.plot(x_values, y_values, color='black', linewidth=1, zorder=1)
-    
-    plt.xlabel('Iteration')
-    plt.ylabel('Accuracy (%)')
-    plt.title(f'Accuracy Plot - Graph {idx}')
-    plt.legend(loc='best', fontsize=8)
-    plt.grid(True)
-    plt.savefig(os.path.join(output_dir, f'graph-{idx}-accuracy.jpeg'))
-    plt.close()
-    
-    # Avg Uncertainty grafiği
-    plt.figure(figsize=(12,5))
-    colors = cycle(['green', 'blue'])
-    used_labels = set()
-    for i, entry in enumerate(graph_data):
-        if entry['method'] == 'base_classifier':
-            color = 'red'
-        else:
-            color = next(colors)
-        plt.scatter(x_values[i], entry['avg_uncertainty'], color=color, s=80, edgecolor='black', zorder=3)
-        
-        # Legend etiketi
-        label = f"{entry['model_name']} | method={entry['method']} | train_data_size={entry['train_data_size']} | data_size={entry['data_size']}"
+
+        y = y_values[i] if i < len(y_values) else None
+        plt.scatter(x_values[i], y, color=color, s=80, edgecolor="black", zorder=3)
+
+        label = f"{model_name} | method={method} | train_data_size={train_data_size} | data_size={data_size}"
         if label not in used_labels:
             plt.scatter([], [], color=color, label=label)
             used_labels.add(label)
-    
-    y_values = [entry['avg_uncertainty'] for entry in graph_data]
-    plt.plot(x_values, y_values, color='black', linewidth=1, zorder=1)
-    
-    plt.xlabel('Iteration')
-    plt.ylabel('Average Uncertainty')
-    plt.title(f'Avg Uncertainty Plot - Graph {idx}')
-    plt.legend(loc='best', fontsize=8)
+
+    plt.plot(x_values, y_values, color="black", linewidth=1, zorder=1)
+
+    xlabel = x_col if x_col is not None else "Iteration"
+    plt.xlabel(xlabel)
+
+    ylabel = metric
+    if metric == "accuracy" and accuracy_percent:
+        ylabel = "Accuracy (%)"
+    plt.ylabel(ylabel)
+
+    stop_reason = None
+    for col in ["stop_reason", "notes", "stop_condition"]:
+        if col in test_df.columns:
+            try:
+                val = test_df[col].iloc[-1]
+                if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                    stop_reason = str(val)
+                    break
+            except Exception:
+                pass
+
+    title = f"{metric} Plot - Graph {test_idx}"
+    if stop_reason:
+        title = f"{title} | stop={stop_reason}"
+    plt.title(title)
+    plt.legend(loc="best", fontsize=8)
     plt.grid(True)
-    plt.savefig(os.path.join(output_dir, f'graph-{idx}-uncertainty.jpeg'))
+
+    file_name = f"graph_{test_idx}_{metric}.jpeg"
+    out_path = os.path.join(output_dir, file_name)
+    plt.savefig(out_path)
     plt.close()
+    return out_path
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", default="results/results.xlsx")
+    parser.add_argument("--output_dir", default="graphs")
+    parser.add_argument("--accuracy_percent", action="store_true")
+    parser.add_argument(
+        "--test_index",
+        type=int,
+        default=None,
+        help="1-based index of the test/data block to plot (after splitting by base_classifier).",
+    )
+    parser.add_argument(
+        "--no_split",
+        action="store_true",
+        help="Treat the entire input as a single test/data block (do not split by base_classifier).",
+    )
+    args = parser.parse_args()
+
+    # Excel dosyasını oku
+    df = _read_results(args.input)
+
+    # metrics sütununu dict olarak al
+    if "metrics" not in df.columns:
+        raise KeyError("Input file must contain a 'metrics' column")
+    df["metrics_dict"] = df["metrics"].apply(_safe_json_loads)
+
+    # Kayıt dizini
+    output_dir = args.output_dir
+    os.makedirs(output_dir, exist_ok=True)
+
+    tests = [df.reset_index(drop=True)] if args.no_split else _split_into_tests(df)
+    if args.test_index is not None:
+        if args.test_index <= 0 or args.test_index > len(tests):
+            raise ValueError(f"--test_index must be between 1 and {len(tests)} (got {args.test_index})")
+        tests = [tests[args.test_index - 1]]
+
+    for idx, test_df in enumerate(tests, 1):
+        metric_keys = set()
+        for d in test_df["metrics_dict"].tolist():
+            if isinstance(d, dict):
+                metric_keys.update(d.keys())
+
+        for metric in sorted(metric_keys):
+            _plot_metric(
+                test_idx=idx,
+                test_df=test_df,
+                metric=metric,
+                output_dir=output_dir,
+                accuracy_percent=args.accuracy_percent,
+            )
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
