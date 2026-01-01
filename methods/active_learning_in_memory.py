@@ -22,16 +22,16 @@ except Exception as e:
     print(f"Warning: failed to print dataset info: {e}")
 
 # ⚙️ CONFIGURABLE PARAMETERS
-MAX_SAMPLES = 100
-TEST_SAMPLE_LIMIT = 100
-BASE_TRAIN_SIZE = 50
+MAX_SAMPLES = 2800
+TEST_SAMPLE_LIMIT = 700
+BASE_TRAIN_SIZE = 20
 
 class ActiveLearning:
     hyper_params = {
-        "N": 20,         # number of samples selected each iteration
+        "N": 50,         # number of samples selected each iteration
         "I": 0.001,     # improvement threshold
-        "T": 0.001,        # model prediction un-certainty threshold
-        "max_iterations": 20,  # maximum number of iterations
+        "T": 0.01,        # model prediction un-certainty threshold
+        "max_iterations": 40,  # maximum number of iterations
         "succcess_rate_threshold": 0.85,  # desired accuracy to stop
         "stratified_batch": False,  # make per-iteration selected batch roughly class-balanced
         "seed": 42,
@@ -153,6 +153,20 @@ class ActiveLearning:
         os.makedirs(base_dir, exist_ok=True)
 
         print(f"Initializing base classifier with {train_size} samples")
+
+        # Seed: mark a small subset of pool as labelled so we can train a base model.
+        # In the original design, the whole pool starts FALSE; samples become TRUE only when used for training.
+        try:
+            seed_candidates = [r for r in database.pool if r[2] == 'FALSE' and r[3] is not None and r[1]]
+            seed_n = min(train_size, len(seed_candidates))
+            if seed_n <= 0:
+                raise RuntimeError("No candidates available to seed base classifier")
+            seed_samples = random.sample(seed_candidates, seed_n)
+            for s in seed_samples:
+                database.update_labelled_sample(s[0], s[3])
+            print(f"Seeded base training set: marked {seed_n} samples as labelled")
+        except Exception as e:
+            print(f"Warning: failed to seed base labelled samples: {e}")
 
         # 1. Load labeled samples
         if source == "db":
@@ -1006,10 +1020,10 @@ if __name__ == '__main__':
     print(f"Labelled samples: {len(database.get_labeled_samples())}")
     
     methods = [
-        ActiveLearning.random_sampling,
         ActiveLearning.uncertainty_sampling,
         ActiveLearning.diversity_sampling,
         ActiveLearning.query_by_comitee,
+        #ActiveLearning.random_sampling,
     ]
 
     for m in methods:

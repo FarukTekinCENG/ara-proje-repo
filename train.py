@@ -234,7 +234,7 @@ class JobClassifierTrainer:
     # --------------------------------------------------
     # TRAIN
     # --------------------------------------------------
-    def train(self, train_dataset, eval_dataset, num_train_epochs=7, learning_rate=2e-5):
+    def train(self, train_dataset, eval_dataset, num_train_epochs=5, learning_rate=2e-5):
         if self.model is None:
             self.initialize_model()
 

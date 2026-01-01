@@ -169,10 +169,7 @@ class RAMDatabase:
                         print(f"Loaded {loaded_count} records...")
             
             print(f"Successfully loaded {loaded_count} records from {csv_path}")
-            
-            # Başlangıç için rastgele etiketli örnekler oluştur
-            self.initialize_labeled_pool(initial_size=100)
-            
+
             # Test seti oluştur
             self.split_pool_to_test(fraction=0.2)
             
@@ -215,7 +212,6 @@ class RAMDatabase:
             self.next_id += 1
         
         print(f"Created {num_samples} sample records")
-        self.initialize_labeled_pool(initial_size=50)
         self.split_pool_to_test(fraction=0.2)
     
     def get_unlabelled_samples(self, batch_size: int = 1000, offset: int = 0) -> List[Tuple]:
