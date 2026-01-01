@@ -509,7 +509,11 @@ class RAMDatabase:
             return
         
         # Kaç örnek etiketlenecek
-        n = min(initial_size, len(unlabelled))
+        # Küçük datasetlerde tamamını labeled yapmak active learning'i kilitler.
+        # Bu yüzden initial labeled oranını maksimum %10 ile sınırla.
+        max_fraction = 0.10
+        fraction_cap = max(1, int(len(unlabelled) * max_fraction))
+        n = min(initial_size, len(unlabelled), fraction_cap)
         
         # Rastgele seç
         selected = random.sample(unlabelled, n)

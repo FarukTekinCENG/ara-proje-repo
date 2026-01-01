@@ -50,9 +50,13 @@ def ensure_balanced_dataset(
                 allowed_labels=allowed_labels,
                 min_expected_rows=min_expected_rows,
             ):
+                print(f"[balanced_dataset] Using existing balanced CSV: {balanced_csv_path}")
                 return balanced_csv_path
         except Exception:
             pass
+
+    print(f"[balanced_dataset] Building balanced CSV: {balanced_csv_path}")
+    print(f"[balanced_dataset] Source raw CSV: {raw_csv_path}")
 
     rng = random.Random(seed)
 
@@ -93,6 +97,9 @@ def ensure_balanced_dataset(
         raise RuntimeError(f"No usable rows found in raw dataset: {raw_csv_path}")
 
     min_n = min(len(rows) for rows in by_label.values())
+    counts_str = ", ".join([f"{k}={len(v)}" for k, v in by_label.items()])
+    print(f"[balanced_dataset] class_counts: {counts_str}")
+    print(f"[balanced_dataset] min_per_class={min_n} -> total={min_n * len(by_label)}")
     if min_n <= 0:
         missing = [lab for lab, rows in by_label.items() if not rows]
         raise RuntimeError(f"Computed min class size is 0; missing labels: {missing}")
