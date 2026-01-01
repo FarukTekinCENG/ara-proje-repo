@@ -974,6 +974,21 @@ class ActiveLearning:
             stop, reason = ActiveLearning.check_stop_condition(test_folder, iteration, None, None)
             if stop:
                 print(f"Stopping: {reason}")
+                # Persist stop event
+                result_file = ActiveLearning.get_next_result_file(test_folder)
+                with open(result_file, "w", newline="") as f:
+                    writer = csv.DictWriter(f, fieldnames=[
+                        "iteration", "n_labeled", "previous_accuracy", "new_accuracy", "stop_condition", "stop_reason"
+                    ])
+                    writer.writeheader()
+                    writer.writerow({
+                        "iteration": iteration,
+                        "n_labeled": 0,
+                        "previous_accuracy": previous_accuracy,
+                        "new_accuracy": None,
+                        "stop_condition": True,
+                        "stop_reason": reason,
+                    })
                 break
             
             # 1. Model tahmini (use current_model_dir)
@@ -1007,12 +1022,49 @@ class ActiveLearning:
             stop, reason = ActiveLearning.check_stop_condition(test_folder, iteration, None, None)
             if stop:
                 print(f"Stopping: {reason}")
+                # Persist stop event
+                result_file = ActiveLearning.get_next_result_file(test_folder)
+                with open(result_file, "w", newline="") as f:
+                    writer = csv.DictWriter(f, fieldnames=[
+                        "iteration", "n_labeled", "previous_accuracy", "new_accuracy", "stop_condition", "stop_reason"
+                    ])
+                    writer.writeheader()
+                    writer.writerow({
+                        "iteration": iteration,
+                        "n_labeled": 0,
+                        "previous_accuracy": previous_accuracy,
+                        "new_accuracy": None,
+                        "stop_condition": True,
+                        "stop_reason": reason,
+                    })
                 break
 
             # ara adim: veriyi etiketle
             labeled_samples = ActiveLearning.prep_labels(selected_samples)
             all_labeled_samples.extend(labeled_samples)
             print(f"Total labeled samples so far: {len(all_labeled_samples)}")
+
+            # Budget may become true right after labeling
+            ActiveLearning._stop_state["labeled_count"] = len(all_labeled_samples)
+            ActiveLearning._stop_state["selected_mean_uncertainty"] = mean_selected_unc
+            stop, reason = ActiveLearning.check_stop_condition(test_folder, iteration, None, None)
+            if stop:
+                print(f"Stopping: {reason}")
+                result_file = ActiveLearning.get_next_result_file(test_folder)
+                with open(result_file, "w", newline="") as f:
+                    writer = csv.DictWriter(f, fieldnames=[
+                        "iteration", "n_labeled", "previous_accuracy", "new_accuracy", "stop_condition", "stop_reason"
+                    ])
+                    writer.writeheader()
+                    writer.writerow({
+                        "iteration": iteration,
+                        "n_labeled": len(labeled_samples),
+                        "previous_accuracy": previous_accuracy,
+                        "new_accuracy": None,
+                        "stop_condition": True,
+                        "stop_reason": reason,
+                    })
+                break
 
             # 3. Modeli eğit / güncelle
             # Train and save into the run-specific model folder (overwrite each iteration)
@@ -1081,9 +1133,6 @@ class ActiveLearning:
                     print(f"Warning: Evaluation failed: {e}")
                     new_accuracy = None
 
-            # 5. Stop condition handled at top of loop (budget) and after selection (T threshold)
-            stop, reason = False, "continue"
-
             # 6. Sonuçları CSV'ye yaz
             result_file = ActiveLearning.get_next_result_file(test_folder)
             with open(result_file, "w", newline="") as f:
@@ -1096,8 +1145,8 @@ class ActiveLearning:
                     "n_labeled": len(labeled_samples),
                     "previous_accuracy": previous_accuracy,
                     "new_accuracy": new_accuracy,
-                    "stop_condition": stop,
-                    "stop_reason": reason
+                    "stop_condition": False,
+                    "stop_reason": "continue"
                 })
 
 # active_learning.py içinde (iteration loop içinde)
@@ -1142,7 +1191,7 @@ class ActiveLearning:
                     metrics=metrics,
                     params=params,
                     run_by=os.getenv("USER") or os.getenv("USERNAME"),
-                    notes=reason,
+                    notes="continue",
                 )
                 
                 if inserted_id:
@@ -1162,7 +1211,7 @@ class ActiveLearning:
                         metrics=metrics,
                         params=params,
                         run_by=os.getenv("USER") or os.getenv("USERNAME"),
-                        notes=reason,
+                        notes="continue",
                     )
                     print(f"Inserted result to LOCAL RAM DB: test_id={test_id}, iteration={iteration}, id={inserted_id}")
                     
