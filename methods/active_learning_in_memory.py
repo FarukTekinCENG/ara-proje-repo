@@ -29,10 +29,10 @@ BASE_TRAIN_SIZE = 20
 class ActiveLearning:
     hyper_params = {
         "N": 50,         # number of samples selected each iteration
-        "I": 0.001,     # improvement threshold
         "T": 0.01,        # model prediction un-certainty threshold
+        "T_patience": 3,  # stop if mean_uncertainty(selected_batch) < T for this many consecutive iterations
+        "label_budget": None,  # optional hard budget on total labelled samples used for training
         "max_iterations": 40,  # maximum number of iterations
-        "succcess_rate_threshold": 0.85,  # desired accuracy to stop
         "stratified_batch": False,  # make per-iteration selected batch roughly class-balanced
         "seed": 42,
         "deterministic": True,
@@ -371,6 +371,39 @@ class ActiveLearning:
         except Exception as e:
             print(f"Warning: failed to compute avg_uncertainty on samples: {e}")
             return None
+
+    @staticmethod
+    def compute_mean_uncertainty_for_selected_samples(samples, model_dir=None):
+        if not samples:
+            return None
+
+        # Prefer already-computed uncertainty_score in sample tuples if present.
+        scores = []
+        for s in samples:
+            try:
+                if len(s) >= 6 and s[5] is not None:
+                    scores.append(float(s[5]))
+            except Exception:
+                pass
+
+        if scores:
+            return sum(scores) / len(scores)
+
+        # Fallback: compute uncertainty on the fly from the current model.
+        try:
+            model_dir = model_dir or ActiveLearning.BASE_DIR
+            predictor = ModelPredictor(model_dir)
+            for s in samples:
+                desc = s[1] if len(s) > 1 else None
+                if not desc:
+                    continue
+                result = predictor.predict(desc)
+                uncertainty = 1 - result["confidence"]
+                scores.append(float(uncertainty))
+            return sum(scores) / len(scores) if scores else None
+        except Exception as e:
+            print(f"Warning: failed to compute mean uncertainty for selected batch: {e}")
+            return None
     
     @staticmethod
     def simple_evaluate(trainer_obj, test_samples):
@@ -425,42 +458,13 @@ class ActiveLearning:
         
     @staticmethod
     def check_stop_condition(test_folder, iteration, previous_accuracy=None, new_accuracy=None):
-        # Stop condition checks using multiple criteria:
-        # - avg uncertainty T threshold
-        # - maximum iterations
-        # - success rate threshold on external test set accuracy
-        # - minimal improvement I
-        pool_scores = database.get_all_uncertainty_scores()
-        if not pool_scores:
-            return True, "pool_empty"
-
-        # convert to floats and compute average uncertainty
-        pool_scores = [float(x) for x in pool_scores]
-        avg_score = sum(pool_scores) / len(pool_scores)
-        if avg_score < ActiveLearning.hyper_params.get("T", 0.0):
-            return True, "T_threshold_reached"
-
-        # max iterations
-        max_it = ActiveLearning.hyper_params.get("max_iterations")
-        if max_it is not None and iteration is not None and iteration >= max_it:
-            return True, "max_iterations_reached"
-
-        # success rate threshold based on external test accuracy
-        sr = ActiveLearning.hyper_params.get("succcess_rate_threshold")
-        if new_accuracy is not None and sr is not None and new_accuracy >= sr:
-            return True, "success_rate_reached"
-
-        # improvement threshold I
-        I = ActiveLearning.hyper_params.get("I")
-        if previous_accuracy is not None and new_accuracy is not None and I is not None:
-            try:
-                diff=(new_accuracy - previous_accuracy)
-                if diff > 0 and diff < I:
-                    return True, "improvement_below_I"
-            except Exception:
-                pass
-
-        return False, None
+        # Stop condition is handled in run() using:
+        # - budget (max_iterations / label_budget)
+        # - mean_uncertainty(selected_batch) < T with patience
+        # Keep this function minimal and backward-compatible.
+        if iteration >= ActiveLearning.hyper_params.get("max_iterations", 0):
+            return True, "max_iterations"
+        return False, "continue"
 
     @staticmethod
     def random_sampling():
@@ -864,8 +868,22 @@ class ActiveLearning:
         # Base accuracy artık referans noktası
         previous_accuracy = base_accuracy
 
+        # Stop-state for uncertainty threshold with patience
+        below_t_streak = 0
+
         while True:
             print(f"\n--- Iteration {iteration} ---")
+
+            # Budget stops (hard constraints)
+            label_budget = ActiveLearning.hyper_params.get("label_budget")
+            if isinstance(label_budget, int) and label_budget > 0:
+                if len(all_labeled_samples) >= label_budget:
+                    print(f"Stopping: label budget reached ({label_budget})")
+                    break
+
+            if iteration >= ActiveLearning.hyper_params.get("max_iterations", 0):
+                print(f"Stopping: max_iterations reached ({ActiveLearning.hyper_params.get('max_iterations')})")
+                break
             
             # 1. Model tahmini (use current_model_dir)
             ActiveLearning.model_predict(max_samples, model_dir=current_model_dir)
@@ -883,6 +901,24 @@ class ActiveLearning:
                 except Exception as e:
                     print(f"Warning: stratified batch selection failed: {e}")
             print(f"Selected {len(selected_samples)} samples for labeling")
+
+            # Uncertainty-threshold stop (mean uncertainty of selected batch)
+            mean_selected_unc = ActiveLearning.compute_mean_uncertainty_for_selected_samples(
+                selected_samples,
+                model_dir=current_model_dir,
+            )
+            if mean_selected_unc is not None:
+                print(f"[stop] mean_uncertainty(selected_batch)={mean_selected_unc:.6f}")
+                T = ActiveLearning.hyper_params.get("T", 0.0)
+                if mean_selected_unc < T:
+                    below_t_streak += 1
+                    patience = ActiveLearning.hyper_params.get("T_patience", 1)
+                    print(f"[stop] below T={T} streak: {below_t_streak}/{patience}")
+                    if below_t_streak >= patience:
+                        print("Stopping: T_threshold_reached (patience)")
+                        break
+                else:
+                    below_t_streak = 0
 
             # ara adim: veriyi etiketle
             labeled_samples = ActiveLearning.prep_labels(selected_samples)
@@ -956,8 +992,8 @@ class ActiveLearning:
                     print(f"Warning: Evaluation failed: {e}")
                     new_accuracy = None
 
-            # 5. Stop condition (use iteration and accuracy if available)
-            stop, reason = ActiveLearning.check_stop_condition(test_folder, iteration, previous_accuracy, new_accuracy)
+            # 5. Stop condition handled at top of loop (budget) and after selection (T threshold)
+            stop, reason = False, "continue"
 
             # 6. Sonuçları CSV'ye yaz
             result_file = ActiveLearning.get_next_result_file(test_folder)
@@ -1010,7 +1046,7 @@ class ActiveLearning:
                     data_size=data_size,
                     N=ActiveLearning.hyper_params.get("N"),
                     T=ActiveLearning.hyper_params.get("T"),
-                    I=ActiveLearning.hyper_params.get("I"),
+                    I=None,
                     metrics=metrics,
                     params=params,
                     run_by=os.getenv("USER") or os.getenv("USERNAME"),
@@ -1030,7 +1066,7 @@ class ActiveLearning:
                         data_size=data_size,
                         N=ActiveLearning.hyper_params.get("N"),
                         T=ActiveLearning.hyper_params.get("T"),
-                        I=ActiveLearning.hyper_params.get("I"),
+                        I=None,
                         metrics=metrics,
                         params=params,
                         run_by=os.getenv("USER") or os.getenv("USERNAME"),
