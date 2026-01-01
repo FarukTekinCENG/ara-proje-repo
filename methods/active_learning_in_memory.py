@@ -36,6 +36,8 @@ class ActiveLearning:
         "stratified_batch": False,  # make per-iteration selected batch roughly class-balanced
         "seed": 42,
         "deterministic": True,
+        "predict_batch_size": 5000,
+        "verbose_pages": False,
     }
     BASE_DIR = "./base_classifier"
     RUNS_BASE = "./tests"
@@ -88,7 +90,9 @@ class ActiveLearning:
         model_dir = model_dir or ActiveLearning.BASE_DIR
         predictor = ModelPredictor(model_dir)
 
-        batch_size = 1000
+        batch_size = ActiveLearning.hyper_params.get("predict_batch_size", 1000)
+        if not isinstance(batch_size, int) or batch_size <= 0:
+            batch_size = 1000
         total_processed = 0
         page = 0
 
@@ -107,7 +111,8 @@ class ActiveLearning:
                 if len(batch) > remaining:
                     batch = batch[:remaining]
 
-            print(f"Page {page}: {len(batch)} records")
+            if ActiveLearning.hyper_params.get("verbose_pages", False):
+                print(f"Page {page}: {len(batch)} records")
             total_processed += len(batch)
             page += 1
 
