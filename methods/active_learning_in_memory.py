@@ -1002,16 +1002,7 @@ class ActiveLearning:
             print(f"Warning: failed to save data to CSV: {e}")
 
 if __name__ == '__main__':
-    # İlk olarak veriyi yükle
-    print("Loading data...")
-    # CSV dosyası varsa yükle, yoksa örnek veri oluştur
-    csv_path = "./data/job_postings.csv"
-    if os.path.exists(csv_path):
-        database.load_from_csv(csv_path)
-    else:
-        print(f"CSV file not found at {csv_path}, creating sample data...")
-        database.create_sample_data(1000)
-    
+    # DB initialization already loaded the dataset (balanced if available).
     print(f"Pool size: {len(database.pool)}")
     print(f"Test set size: {len(database.test_data)}")
     print(f"Labelled samples: {len(database.get_labeled_samples())}")

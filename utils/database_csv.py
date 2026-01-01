@@ -139,18 +139,19 @@ class RAMDatabase:
             # CSV'ye kaydet
             dataset["train"].to_csv(self.data_csv_path, index=False)
             print(f"Dataset downloaded and saved to {self.data_csv_path}")
-            
-            # Sadece bir kısmını almak için (hız için)
-            if os.path.exists(self.data_csv_path):
-                # İlk 5000 kaydı al
-                import pandas as pd
+
+            # Optional row limiting (disabled by default). Set DATASET_ROW_LIMIT to enable.
+            row_limit = os.getenv("DATASET_ROW_LIMIT")
+            if row_limit and os.path.exists(self.data_csv_path):
                 try:
-                    df = pd.read_csv(self.data_csv_path, nrows=5000)
-                    df.to_csv(self.data_csv_path, index=False)
-                    print(f"Kept first 5000 records for speed")
+                    row_limit_int = int(row_limit)
+                    if row_limit_int > 0:
+                        import pandas as pd
+                        df = pd.read_csv(self.data_csv_path, nrows=row_limit_int)
+                        df.to_csv(self.data_csv_path, index=False)
+                        print(f"Kept first {row_limit_int} records due to DATASET_ROW_LIMIT")
                 except Exception as e:
-                    print(f"Error limiting dataset size: {e}")
-                    # Hata olursa devam et
+                    print(f"Error applying DATASET_ROW_LIMIT: {e}")
                     
         except Exception as e:
             print(f"Error downloading dataset: {e}")
