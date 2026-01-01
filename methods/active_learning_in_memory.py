@@ -22,6 +22,12 @@ from utils.metrics import compute_minority_metrics
 import re
 import shutil
 
+try:
+    print(f"[dataset] database.data_csv_path={getattr(database, 'data_csv_path', None)}")
+    print(f"[dataset] pool_size={len(getattr(database, 'pool', []) or [])} test_size={len(getattr(database, 'test_data', []) or [])}")
+except Exception as e:
+    print(f"Warning: failed to print dataset info: {e}")
+
 # ⚙️ CONFIGURABLE PARAMETERS
 MAX_SAMPLES = 100
 TEST_SAMPLE_LIMIT = 100
@@ -34,6 +40,9 @@ class ActiveLearning:
         "T": 0.001,        # model prediction un-certainty threshold
         "max_iterations": 20,  # maximum number of iterations
         "succcess_rate_threshold": 0.85,  # desired accuracy to stop
+        "stratified_batch": False,  # make per-iteration selected batch roughly class-balanced
+        "seed": 42,
+        "deterministic": True,
     }
     BASE_DIR = "./base_classifier"
     RUNS_BASE = "./tests"
@@ -406,6 +415,81 @@ class ActiveLearning:
         return random.sample(unlabelled, N)
 
     @staticmethod
+    def stratified_subsample(samples, n, label_index=3, seed=42):
+        """Pick ~equal number of samples per class from an already-ranked candidate list.
+
+        - Works as a *post-processing* step: upstream algorithm decides candidate ranking.
+        - Preserves within-class order from `samples` (so scoring is respected inside each class).
+        - If some classes have insufficient samples, fills remaining slots from the leftover pool.
+        """
+        if not samples:
+            return samples
+        if n is None or n <= 0:
+            return []
+        if len(samples) <= n:
+            return samples
+
+        rng = random.Random(seed)
+
+        by_label = {}
+        label_order = []
+        for s in samples:
+            label = None
+            try:
+                label = s[label_index]
+            except Exception:
+                label = None
+            if label not in by_label:
+                by_label[label] = []
+                label_order.append(label)
+            by_label[label].append(s)
+
+        # Deterministic but shuffled distribution of remainder to avoid always favoring same labels
+        labels = list(label_order)
+        rng.shuffle(labels)
+
+        k = len(labels)
+        base = n // k
+        rem = n % k
+
+        quotas = {lab: base for lab in labels}
+        for lab in labels[:rem]:
+            quotas[lab] += 1
+
+        picked = []
+        leftovers = []
+        for lab in label_order:
+            rows = by_label.get(lab, [])
+            q = quotas.get(lab, 0)
+            picked.extend(rows[:q])
+            leftovers.extend(rows[q:])
+
+        if len(picked) < n:
+            need = n - len(picked)
+            picked.extend(leftovers[:need])
+
+        return picked[:n]
+
+    @staticmethod
+    def set_seeds(seed: int = 42, deterministic: bool = False):
+        random.seed(seed)
+        try:
+            import numpy as np
+            np.random.seed(seed)
+        except Exception:
+            pass
+        try:
+            import torch
+            torch.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
+            if deterministic:
+                torch.backends.cudnn.deterministic = True
+                torch.backends.cudnn.benchmark = False
+        except Exception:
+            pass
+
+    @staticmethod
     def uncertainty_sampling():
         return database.uncertainty_sampling_selection(ActiveLearning.hyper_params["N"])
 
@@ -523,6 +607,15 @@ class ActiveLearning:
 
     @staticmethod
     def run(function_algorithm, max_samples=None, test_samples=None, test_sample_limit=TEST_SAMPLE_LIMIT, test_from_db=True, base_train_size=BASE_TRAIN_SIZE):
+        # Make runs comparable
+        try:
+            ActiveLearning.set_seeds(
+                seed=ActiveLearning.hyper_params.get("seed", 42),
+                deterministic=ActiveLearning.hyper_params.get("deterministic", False),
+            )
+        except Exception as e:
+            print(f"Warning: failed to set seeds: {e}")
+
         # tum set
         all_labeled_samples = []
 
@@ -719,6 +812,16 @@ class ActiveLearning:
 
             # 2. Algoritma ile etiketlenecek ornekleri sec
             selected_samples = function_algorithm()
+            if ActiveLearning.hyper_params.get("stratified_batch", False):
+                try:
+                    selected_samples = ActiveLearning.stratified_subsample(
+                        selected_samples,
+                        ActiveLearning.hyper_params.get("N", len(selected_samples)),
+                        label_index=3,
+                        seed=42,
+                    )
+                except Exception as e:
+                    print(f"Warning: stratified batch selection failed: {e}")
             print(f"Selected {len(selected_samples)} samples for labeling")
 
             # ara adim: veriyi etiketle
@@ -765,7 +868,11 @@ class ActiveLearning:
                             split=False,
                         )
 
-                        predictions = trainer_obj.trainer.predict(test_ds)
+                        hf_trainer = getattr(trainer_obj, "trainer", None)
+                        if hf_trainer is None:
+                            raise AttributeError("trainer_obj.trainer is missing")
+
+                        predictions = hf_trainer.predict(test_ds)
                         logits = predictions.predictions
                         labels = predictions.label_ids
 

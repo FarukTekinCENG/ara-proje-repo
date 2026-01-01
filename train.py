@@ -39,6 +39,7 @@ class JobClassifierTrainer:
         self.tokenizer = None
         self.model = None
         self.label_encoder = None
+        self.trainer = None
 
     # --------------------------------------------------
     # MODEL + TOKENIZER + LABEL ENCODER INIT
@@ -283,6 +284,8 @@ class JobClassifierTrainer:
             tokenizer=self.tokenizer,
             class_weights=class_weights,
         )
+
+        self.trainer = trainer
 
         #
         trainer.train()
