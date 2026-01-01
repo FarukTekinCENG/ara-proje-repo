@@ -3,6 +3,8 @@ import sys
 import csv
 import torch
 import random
+import shutil
+import json
 from transformers import TrainingArguments, Trainer
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -751,6 +753,27 @@ class ActiveLearning:
 
         # Ensure base classifier exists
         os.makedirs(ActiveLearning.RUNS_BASE, exist_ok=True)
+
+        # If base_dir exists but is not a valid HF model folder, remove it so we can rebuild.
+        try:
+            if os.path.exists(ActiveLearning.BASE_DIR):
+                cfg_path = os.path.join(ActiveLearning.BASE_DIR, "config.json")
+                if not os.path.exists(cfg_path):
+                    raise RuntimeError("missing config.json")
+                try:
+                    with open(cfg_path, "r", encoding="utf-8") as f:
+                        cfg = json.load(f)
+                    if not isinstance(cfg, dict) or "model_type" not in cfg:
+                        raise RuntimeError("config.json missing model_type")
+                except Exception as e:
+                    raise RuntimeError(f"invalid config.json: {e}")
+        except Exception as e:
+            try:
+                print(f"Warning: invalid base classifier folder ({e}); removing {ActiveLearning.BASE_DIR} and rebuilding...")
+                shutil.rmtree(ActiveLearning.BASE_DIR, ignore_errors=True)
+            except Exception as e2:
+                print(f"Warning: failed to remove invalid base classifier folder: {e2}")
+
         if not os.path.exists(ActiveLearning.BASE_DIR):
             print("Base classifier not found. Initializing and training...")
 

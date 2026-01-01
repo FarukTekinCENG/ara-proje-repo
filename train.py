@@ -2,6 +2,7 @@ import torch
 import os
 import joblib
 import numpy as np
+import inspect
 from sklearn.preprocessing import LabelEncoder
 from datasets import Dataset
 from transformers import (
@@ -245,25 +246,38 @@ class JobClassifierTrainer:
         fp16 = torch.cuda.is_available() and not torch.cuda.is_bf16_supported()
         bf16 = torch.cuda.is_bf16_supported()
 
-        # ⚠️ evaluation_strategy / save_strategy YOK
-        training_args = TrainingArguments(
-            output_dir="./results",
-            per_device_train_batch_size=16,
-            per_device_eval_batch_size=16,
-            gradient_accumulation_steps=1,
-            num_train_epochs=num_train_epochs,                         # 1 AZ > 3-5 OLMALI
-            learning_rate=learning_rate,
-            weight_decay=0.01,
-            logging_steps=50,
-            overwrite_output_dir=True,
-            evaluation_strategy="no",
-            save_strategy="no",
-            save_total_limit=1,
-            remove_unused_columns=False,
-            report_to="none",
-            fp16=fp16,
-            bf16=bf16,
-        )
+        # ⚠️ transformers sürüm farkları nedeniyle TrainingArguments parametrelerini filtrele
+        sig = inspect.signature(TrainingArguments.__init__)
+        allowed = set(sig.parameters.keys())
+
+        args_kwargs = {
+            "output_dir": "./results",
+            "per_device_train_batch_size": 16,
+            "per_device_eval_batch_size": 16,
+            "gradient_accumulation_steps": 1,
+            "num_train_epochs": num_train_epochs,                         # 1 AZ > 3-5 OLMALI
+            "learning_rate": learning_rate,
+            "weight_decay": 0.01,
+            "logging_steps": 50,
+            "overwrite_output_dir": True,
+            "remove_unused_columns": False,
+            "report_to": "none",
+            "fp16": fp16,
+            "bf16": bf16,
+        }
+
+        # Checkpoint/disk bloat önleme (destekleniyorsa)
+        if "save_strategy" in allowed:
+            args_kwargs["save_strategy"] = "no"
+        if "save_total_limit" in allowed:
+            args_kwargs["save_total_limit"] = 1
+        if "evaluation_strategy" in allowed:
+            args_kwargs["evaluation_strategy"] = "no"
+        elif "eval_strategy" in allowed:
+            args_kwargs["eval_strategy"] = "no"
+
+        filtered_kwargs = {k: v for k, v in args_kwargs.items() if k in allowed}
+        training_args = TrainingArguments(**filtered_kwargs)
 
         # trainer = Trainer(
         #     model=self.model,
