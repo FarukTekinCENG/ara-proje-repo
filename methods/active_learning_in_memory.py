@@ -327,6 +327,50 @@ class ActiveLearning:
             except Exception as e2:
                 print(f"Simple evaluation also failed: {e2}")
                 return None
+
+    @staticmethod
+    def compute_avg_uncertainty_on_samples(trainer_obj, samples):
+        if not samples:
+            return None
+
+        try:
+            ds, _ = trainer_obj.prepare_datasets_from_tuples(
+                samples,
+                description_index=1,
+                label_index=3,
+                split=False,
+            )
+
+            hf_trainer = getattr(trainer_obj, "trainer", None)
+            if hf_trainer is None:
+                training_args = TrainingArguments(
+                    output_dir="./temp_eval",
+                    eval_strategy="no",
+                    per_device_eval_batch_size=16,
+                    remove_unused_columns=False,
+                    report_to="none",
+                    fp16=torch.cuda.is_available(),
+                )
+                hf_trainer = Trainer(
+                    model=trainer_obj.model,
+                    args=training_args,
+                    tokenizer=trainer_obj.tokenizer,
+                )
+
+            preds = hf_trainer.predict(ds)
+            logits = preds.predictions
+            if logits is None:
+                return None
+
+            logits_t = torch.tensor(logits)
+            probs = torch.softmax(logits_t, dim=-1)
+            confidences = probs.max(dim=-1).values
+            uncertainties = 1.0 - confidences
+            return float(uncertainties.mean().item())
+
+        except Exception as e:
+            print(f"Warning: failed to compute avg_uncertainty on samples: {e}")
+            return None
     
     @staticmethod
     def simple_evaluate(trainer_obj, test_samples):
@@ -762,8 +806,12 @@ class ActiveLearning:
         # ... BASE classifier evaluation sonrası ...
         # --- Remote DB insert (try remote first, then fallback to local RAM) ---
         try:
-            scores = database.get_all_uncertainty_scores()
-            avg_uncertainty = sum([float(x) for x in scores]) / len(scores) if scores else None
+            avg_uncertainty = None
+            if test_samples:
+                avg_uncertainty = ActiveLearning.compute_avg_uncertainty_on_samples(base_trainer, test_samples)
+            if avg_uncertainty is None:
+                scores = database.get_all_uncertainty_scores()
+                avg_uncertainty = sum([float(x) for x in scores]) / len(scores) if scores else None
             metrics = {"accuracy": base_accuracy, "avg_uncertainty": avg_uncertainty} if base_accuracy is not None else {"avg_uncertainty": avg_uncertainty}
             params = {
                 "run_model_dir": ActiveLearning.BASE_DIR,
