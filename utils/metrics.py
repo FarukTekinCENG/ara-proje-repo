@@ -14,12 +14,11 @@ def compute_minority_metrics(logits, labels, label_encoder):
 
     macro_f1 = report["macro avg"]["f1-score"]
 
-    minority = ["Internship", "Temporary", "Volunteer"]
-
-    minority_recalls = {
+    classes = list(label_encoder.classes_)
+    per_class_recalls = {
         cls: report[cls]["recall"]
-        for cls in minority
+        for cls in classes
         if cls in report
     }
 
-    return macro_f1, minority_recalls
+    return macro_f1, per_class_recalls

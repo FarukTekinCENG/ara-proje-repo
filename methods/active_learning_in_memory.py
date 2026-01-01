@@ -945,7 +945,7 @@ class ActiveLearning:
             # 4. Accuracy kontrolü
             new_accuracy = None
             macro_f1 = None
-            minority_recalls = {}
+            per_class_recalls = {}
 
             # If an external test set is provided, evaluate on it
             if test_samples:
@@ -972,7 +972,7 @@ class ActiveLearning:
                         logits = predictions.predictions
                         labels = predictions.label_ids
 
-                        macro_f1, minority_recalls = compute_minority_metrics(
+                        macro_f1, per_class_recalls = compute_minority_metrics(
                             logits,
                             labels,
                             trainer_obj.label_encoder
@@ -980,13 +980,13 @@ class ActiveLearning:
 
                         print(
                             f"[ITER {iteration}] macro_f1={macro_f1:.4f} "
-                            f"minority_recalls={minority_recalls}"
+                            f"recalls={per_class_recalls}"
                         )
 
                     except Exception as e:
                         print(f"Warning: minority metrics computation failed: {e}")
                         macro_f1 = None
-                        minority_recalls = {}
+                        per_class_recalls = {}
 
                 except Exception as e:
                     print(f"Warning: Evaluation failed: {e}")
@@ -1023,10 +1023,10 @@ class ActiveLearning:
                     "macro_f1": macro_f1,
                 }
                 
-                # Add minority recalls if available
-                if minority_recalls:
-                    for key, value in minority_recalls.items():
-                        metrics[f"recall_{key.lower()}"] = value
+                # Add per-class recalls if available
+                if per_class_recalls:
+                    for key, value in per_class_recalls.items():
+                        metrics[f"recall_{str(key).lower()}"] = value
                 
                 params = {
                     "run_model_dir": run_model_dir,
