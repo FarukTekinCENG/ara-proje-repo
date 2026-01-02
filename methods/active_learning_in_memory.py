@@ -143,6 +143,17 @@ class ActiveLearning:
         return samples
 
     @staticmethod
+    def fallback_random_unlabelled(n: int):
+        try:
+            candidates = [r for r in database.pool if r[2] == 'FALSE' and r[1] and r[3] is not None]
+            if not candidates:
+                return []
+            k = min(int(n), len(candidates))
+            return random.sample(candidates, k)
+        except Exception:
+            return []
+
+    @staticmethod
     def initialize_and_train_base_classifier(
         train_size=500,
         base_dir=None,
@@ -246,8 +257,13 @@ class ActiveLearning:
         else:
             trainer.initialize_model()
         
-        # MODEL ADI
-        trainer.model_name = os.path.basename(source_model_dir.rstrip("/"))
+        # MODEL ADI (DB/log için): HF base model + hangi local klasörden devam edildiği
+        try:
+            base_id = getattr(JobClassifierTrainer, "model_name", None) or getattr(trainer, "model_name", None) or "unknown"
+        except Exception:
+            base_id = "unknown"
+        run_name = os.path.basename(source_model_dir.rstrip("/"))
+        trainer.model_name = f"{base_id} ({run_name})"
 
         # DEBUG: Check what we have in samples
         if samples and len(samples) > 0:
@@ -996,6 +1012,13 @@ class ActiveLearning:
 
             # 2. Algoritma ile etiketlenecek ornekleri sec
             selected_samples = function_algorithm()
+
+            # QBC (ve genel) güvenlik: bazen seçim boş dönebilir (committee member fail vb.)
+            # Bu durumda pipeline'ın boşa düşmemesi için fallback random seçim yap.
+            if not selected_samples:
+                fallback_n = ActiveLearning.hyper_params.get("N", 0) or 0
+                if fallback_n > 0:
+                    selected_samples = ActiveLearning.fallback_random_unlabelled(fallback_n)
             if ActiveLearning.hyper_params.get("stratified_batch", False):
                 try:
                     selected_samples = ActiveLearning.stratified_subsample(
@@ -1135,6 +1158,11 @@ class ActiveLearning:
 
             # 6. Sonuçları CSV'ye yaz
             result_file = ActiveLearning.get_next_result_file(test_folder)
+
+            # If this iteration hits max_iterations, persist it as a stop event (so DB/CSV contains the reason)
+            max_iters = int(ActiveLearning.hyper_params.get("max_iterations") or 0)
+            max_iter_stop = (max_iters > 0 and iteration >= max_iters)
+            max_iter_reason = f"max_iterations_reached ({max_iters})" if max_iter_stop else "continue"
             with open(result_file, "w", newline="") as f:
                 writer = csv.DictWriter(f, fieldnames=[
                     "iteration", "n_labeled", "previous_accuracy", "new_accuracy", "stop_condition", "stop_reason"
@@ -1145,8 +1173,8 @@ class ActiveLearning:
                     "n_labeled": len(labeled_samples),
                     "previous_accuracy": previous_accuracy,
                     "new_accuracy": new_accuracy,
-                    "stop_condition": False,
-                    "stop_reason": "continue"
+                    "stop_condition": bool(max_iter_stop),
+                    "stop_reason": max_iter_reason,
                 })
 
 # active_learning.py içinde (iteration loop içinde)
@@ -1176,13 +1204,16 @@ class ActiveLearning:
                     "method": method_name,
                     "DATA_SIZE": data_size,
                 }
+
+                if method_name == "query_by_comitee":
+                    params["committee_models"] = list(getattr(ActiveLearning, "model_list", []) or [])
                 
                 # Önce remote DB'ye kaydetmeyi dene
                 inserted_id = database.insert_test_result_remote(
                     test_id=test_id,
                     iteration_no=iteration,
                     model_name=getattr(trainer_obj, "model_name", None) or "unknown",
-                    train_data_size=len(labeled_samples) if labeled_samples else 0,
+                    train_data_size=len(all_labeled_samples),
                     method=method_name,
                     data_size=data_size,
                     N=ActiveLearning.hyper_params.get("N"),
@@ -1191,7 +1222,7 @@ class ActiveLearning:
                     metrics=metrics,
                     params=params,
                     run_by=os.getenv("USER") or os.getenv("USERNAME"),
-                    notes="continue",
+                    notes=max_iter_reason,
                 )
                 
                 if inserted_id:
@@ -1202,7 +1233,7 @@ class ActiveLearning:
                         test_id=test_id,
                         iteration_no=iteration,
                         model_name=getattr(trainer_obj, "model_name", None) or "unknown",
-                        train_data_size=len(labeled_samples) if labeled_samples else 0,
+                        train_data_size=len(all_labeled_samples),
                         method=method_name,
                         data_size=data_size,
                         N=ActiveLearning.hyper_params.get("N"),
@@ -1211,7 +1242,7 @@ class ActiveLearning:
                         metrics=metrics,
                         params=params,
                         run_by=os.getenv("USER") or os.getenv("USERNAME"),
-                        notes="continue",
+                        notes=max_iter_reason,
                     )
                     print(f"Inserted result to LOCAL RAM DB: test_id={test_id}, iteration={iteration}, id={inserted_id}")
                     
@@ -1219,6 +1250,11 @@ class ActiveLearning:
                 print(f"Warning: failed to insert result row to DB: {e}")
 
             print(f"Iteration {iteration} results saved to {result_file}")
+
+            if max_iter_stop:
+                print(f"Reached maximum iterations ({max_iters})")
+                break
+
             iteration += 1
             previous_accuracy = new_accuracy
 
@@ -1226,10 +1262,7 @@ class ActiveLearning:
                 print(f"Stopping: {reason}")
                 break
 
-            # Safety check: don't exceed maximum iterations
-            if iteration > ActiveLearning.hyper_params["max_iterations"]:
-                print(f"Reached maximum iterations ({ActiveLearning.hyper_params['max_iterations']})")
-                break
+            # max_iterations stop is handled above by persisting the final iteration row.
         
         # Son olarak veriyi CSV'ye kaydet
         try:
