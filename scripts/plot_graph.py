@@ -44,13 +44,33 @@ def _split_into_tests(df: pd.DataFrame) -> List[pd.DataFrame]:
     current_rows: List[int] = []
 
     method_col = "method" if "method" in df.columns else None
-    if method_col is None:
-        return [df]
+    iter_col = "iteration_no" if "iteration_no" in df.columns else None
+    notes_col = "notes" if "notes" in df.columns else None
+
+    def _is_run_start(r: pd.Series) -> bool:
+        m = str(r.get(method_col, "")) if method_col else ""
+        n = str(r.get(notes_col, "")) if notes_col else ""
+        it0 = False
+        if iter_col:
+            try:
+                it0 = int(r.get(iter_col)) == 0
+            except Exception:
+                it0 = False
+
+        # Run start markers:
+        # - iteration_no == 0 (most reliable for DB exports)
+        # - method == BASE/base_classifier or notes == base_classifier
+        if it0:
+            return True
+        if m.upper() == "BASE" or m == "base_classifier":
+            return True
+        if n == "base_classifier":
+            return True
+        return False
 
     for idx, row in df.iterrows():
-        if str(row.get(method_col)) == "base_classifier":
-            if current_rows:
-                tests.append(df.loc[current_rows].reset_index(drop=True))
+        if _is_run_start(row) and current_rows:
+            tests.append(df.loc[current_rows].reset_index(drop=True))
             current_rows = [idx]
         else:
             if not current_rows:
@@ -152,11 +172,18 @@ def _plot_metric(
     plt.legend(loc="best", fontsize=8)
     plt.grid(True)
 
-    file_name = f"graph_{test_idx}_{metric}.jpeg"
+    file_name = f"{metric}.jpeg"
     out_path = os.path.join(output_dir, file_name)
     plt.savefig(out_path)
     plt.close()
     return out_path
+
+
+def _derive_result_folder_name(input_path: str) -> str:
+    base = os.path.splitext(os.path.basename(input_path))[0]
+    if base.startswith("results"):
+        return "result" + base[len("results"):]
+    return base
 
 
 def main() -> int:
@@ -186,8 +213,11 @@ def main() -> int:
     df["metrics_dict"] = df["metrics"].apply(_safe_json_loads)
 
     # Kayıt dizini
-    output_dir = args.output_dir
-    os.makedirs(output_dir, exist_ok=True)
+    result_folder = _derive_result_folder_name(args.input)
+    base_output_dir = args.output_dir
+    if base_output_dir == "graphs":
+        base_output_dir = os.path.join(os.path.dirname(args.input), result_folder)
+    os.makedirs(base_output_dir, exist_ok=True)
 
     tests = [df.reset_index(drop=True)] if args.no_split else _split_into_tests(df)
     if args.test_index is not None:
@@ -196,6 +226,9 @@ def main() -> int:
         tests = [tests[args.test_index - 1]]
 
     for idx, test_df in enumerate(tests, 1):
+        output_dir = os.path.join(base_output_dir, f"data{idx}graphs")
+        os.makedirs(output_dir, exist_ok=True)
+
         metric_keys = set()
         for d in test_df["metrics_dict"].tolist():
             if isinstance(d, dict):
