@@ -35,6 +35,7 @@ class ActiveLearning:
         "T_patience": 3,  # stop if mean_uncertainty(selected_batch) < T for this many consecutive iterations
         "uncertainty_plateau_eps": 0.01,  # stop if selected batch mean uncertainty stops decreasing (min drop)
         "uncertainty_plateau_patience": 5,  # consecutive iterations with <eps improvement before stop
+        "accuracy_threshold": None,  # optional: stop if test accuracy >= threshold (None disables)
         "label_budget": 1500, # None,  # optional hard budget on total labelled samples used for training
         "max_iterations": 30,  # maximum number of iterations
         "stratified_batch": False,  # make per-iteration selected batch roughly class-balanced
@@ -1122,10 +1123,20 @@ class ActiveLearning:
             label_budget = ActiveLearning.hyper_params.get("label_budget")
             budget_stop = isinstance(label_budget, int) and label_budget > 0 and len(all_labeled_samples) >= label_budget
 
-            stop_condition = bool(stop_after_iteration or max_iter_stop or budget_stop)
+            acc_thr = ActiveLearning.hyper_params.get("accuracy_threshold", None)
+            accuracy_stop = False
+            if acc_thr is not None and new_accuracy is not None:
+                try:
+                    accuracy_stop = float(new_accuracy) >= float(acc_thr)
+                except Exception:
+                    accuracy_stop = False
+
+            stop_condition = bool(stop_after_iteration or accuracy_stop or max_iter_stop or budget_stop)
             if stop_condition:
                 if stop_after_iteration:
                     final_reason = stop_reason
+                elif accuracy_stop:
+                    final_reason = f"accuracy_threshold ({acc_thr})"
                 elif budget_stop:
                     final_reason = "label_budget"
                 else:
@@ -1172,6 +1183,7 @@ class ActiveLearning:
                     "previous_accuracy": previous_accuracy,
                     "method": method_name,
                     "DATA_SIZE": data_size,
+                    "accuracy_threshold": acc_thr,
                 }
 
                 if method_name == "query_by_comitee":
