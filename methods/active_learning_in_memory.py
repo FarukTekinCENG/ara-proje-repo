@@ -508,15 +508,6 @@ class ActiveLearning:
         labeled_count = int(state.get("labeled_count", 0) or 0)
         selected_mean_uncertainty = state.get("selected_mean_uncertainty", None)
 
-        # --- Budget stops ---
-        max_it = ActiveLearning.hyper_params.get("max_iterations", 0)
-        if isinstance(max_it, int) and max_it > 0 and iteration >= max_it:
-            return True, "max_iterations"
-
-        label_budget = ActiveLearning.hyper_params.get("label_budget")
-        if isinstance(label_budget, int) and label_budget > 0 and labeled_count >= label_budget:
-            return True, "label_budget"
-
         # --- Plateau stop on selected-batch uncertainty ---
         if selected_mean_uncertainty is None:
             return False, "continue"
@@ -1001,68 +992,9 @@ class ActiveLearning:
             ActiveLearning._stop_state["labeled_count"] = len(all_labeled_samples)
             ActiveLearning._stop_state["selected_mean_uncertainty"] = None
 
-            # Budget check via central stop function (no selected uncertainty yet)
-            stop, reason = ActiveLearning.check_stop_condition(test_folder, iteration, None, None)
-            if stop:
-                print(f"Stopping: {reason}")
-                # Persist stop event
-                result_file = ActiveLearning.get_next_result_file(test_folder)
-                with open(result_file, "w", newline="") as f:
-                    writer = csv.DictWriter(f, fieldnames=[
-                        "iteration", "n_labeled", "previous_accuracy", "new_accuracy", "stop_condition", "stop_reason"
-                    ])
-                    writer.writeheader()
-                    writer.writerow({
-                        "iteration": iteration,
-                        "n_labeled": 0,
-                        "previous_accuracy": previous_accuracy,
-                        "new_accuracy": None,
-                        "stop_condition": True,
-                        "stop_reason": reason,
-                    })
-
-                try:
-                    stop_params = {
-                        "run_model_dir": current_model_dir,
-                        "test_folder": test_folder,
-                        "previous_accuracy": previous_accuracy,
-                        "method": method_name,
-                        "DATA_SIZE": data_size,
-                    }
-                    inserted_id = database.insert_test_result_remote(
-                        test_id=test_id,
-                        iteration_no=iteration,
-                        model_name=ActiveLearning.normalize_model_name(base_model_id),
-                        train_data_size=len(all_labeled_samples),
-                        method=method_name,
-                        data_size=data_size,
-                        N=ActiveLearning.hyper_params.get("N"),
-                        T=ActiveLearning.hyper_params.get("T"),
-                        I=None,
-                        metrics={"accuracy": None},
-                        params=stop_params,
-                        run_by=os.getenv("USER") or os.getenv("USERNAME"),
-                        notes=str(reason),
-                    )
-                    if not inserted_id:
-                        database.insert_test_result(
-                            test_id=test_id,
-                            iteration_no=iteration,
-                            model_name=ActiveLearning.normalize_model_name(base_model_id),
-                            train_data_size=len(all_labeled_samples),
-                            method=method_name,
-                            data_size=data_size,
-                            N=ActiveLearning.hyper_params.get("N"),
-                            T=ActiveLearning.hyper_params.get("T"),
-                            I=None,
-                            metrics={"accuracy": None},
-                            params=stop_params,
-                            run_by=os.getenv("USER") or os.getenv("USERNAME"),
-                            notes=str(reason),
-                        )
-                except Exception as e:
-                    print(f"Warning: failed to insert stop row to DB: {e}")
-                break
+            # Do not stop before evaluation; stop decisions are applied after training+evaluation
+            stop_after_iteration = False
+            stop_reason = "continue"
             
             # 1. Model tahmini (use current_model_dir)
             ActiveLearning.model_predict(max_samples, model_dir=current_model_dir)
@@ -1099,67 +1031,10 @@ class ActiveLearning:
             # Plateau check via central stop function
             ActiveLearning._stop_state["labeled_count"] = len(all_labeled_samples)
             ActiveLearning._stop_state["selected_mean_uncertainty"] = mean_selected_unc
-            stop, reason = ActiveLearning.check_stop_condition(test_folder, iteration, None, None)
-            if stop:
-                print(f"Stopping: {reason}")
-                # Persist stop event
-                result_file = ActiveLearning.get_next_result_file(test_folder)
-                with open(result_file, "w", newline="") as f:
-                    writer = csv.DictWriter(f, fieldnames=[
-                        "iteration", "n_labeled", "previous_accuracy", "new_accuracy", "stop_condition", "stop_reason"
-                    ])
-                    writer.writeheader()
-                    writer.writerow({
-                        "iteration": iteration,
-                        "n_labeled": 0,
-                        "previous_accuracy": previous_accuracy,
-                        "new_accuracy": None,
-                        "stop_condition": True,
-                        "stop_reason": reason,
-                    })
-
-                try:
-                    stop_params = {
-                        "run_model_dir": current_model_dir,
-                        "test_folder": test_folder,
-                        "previous_accuracy": previous_accuracy,
-                        "method": method_name,
-                        "DATA_SIZE": data_size,
-                    }
-                    inserted_id = database.insert_test_result_remote(
-                        test_id=test_id,
-                        iteration_no=iteration,
-                        model_name=ActiveLearning.normalize_model_name(base_model_id),
-                        train_data_size=len(all_labeled_samples),
-                        method=method_name,
-                        data_size=data_size,
-                        N=ActiveLearning.hyper_params.get("N"),
-                        T=ActiveLearning.hyper_params.get("T"),
-                        I=None,
-                        metrics={"accuracy": None, "selected_samples_avg_uncertainty": mean_selected_unc},
-                        params=stop_params,
-                        run_by=os.getenv("USER") or os.getenv("USERNAME"),
-                        notes=str(reason),
-                    )
-                    if not inserted_id:
-                        database.insert_test_result(
-                            test_id=test_id,
-                            iteration_no=iteration,
-                            model_name=ActiveLearning.normalize_model_name(base_model_id),
-                            train_data_size=len(all_labeled_samples),
-                            method=method_name,
-                            data_size=data_size,
-                            N=ActiveLearning.hyper_params.get("N"),
-                            T=ActiveLearning.hyper_params.get("T"),
-                            I=None,
-                            metrics={"accuracy": None, "selected_samples_avg_uncertainty": mean_selected_unc},
-                            params=stop_params,
-                            run_by=os.getenv("USER") or os.getenv("USERNAME"),
-                            notes=str(reason),
-                        )
-                except Exception as e:
-                    print(f"Warning: failed to insert stop row to DB: {e}")
-                break
+            stop_plateau, plateau_reason = ActiveLearning.check_stop_condition(test_folder, iteration, None, None)
+            if stop_plateau:
+                stop_after_iteration = True
+                stop_reason = plateau_reason
 
             # ara adim: veriyi etiketle
             labeled_samples = ActiveLearning.prep_labels(selected_samples)
@@ -1169,66 +1044,7 @@ class ActiveLearning:
             # Budget may become true right after labeling
             ActiveLearning._stop_state["labeled_count"] = len(all_labeled_samples)
             ActiveLearning._stop_state["selected_mean_uncertainty"] = mean_selected_unc
-            stop, reason = ActiveLearning.check_stop_condition(test_folder, iteration, None, None)
-            if stop:
-                print(f"Stopping: {reason}")
-                result_file = ActiveLearning.get_next_result_file(test_folder)
-                with open(result_file, "w", newline="") as f:
-                    writer = csv.DictWriter(f, fieldnames=[
-                        "iteration", "n_labeled", "previous_accuracy", "new_accuracy", "stop_condition", "stop_reason"
-                    ])
-                    writer.writeheader()
-                    writer.writerow({
-                        "iteration": iteration,
-                        "n_labeled": len(labeled_samples),
-                        "previous_accuracy": previous_accuracy,
-                        "new_accuracy": None,
-                        "stop_condition": True,
-                        "stop_reason": reason,
-                    })
-
-                try:
-                    stop_params = {
-                        "run_model_dir": current_model_dir,
-                        "test_folder": test_folder,
-                        "previous_accuracy": previous_accuracy,
-                        "method": method_name,
-                        "DATA_SIZE": data_size,
-                    }
-                    inserted_id = database.insert_test_result_remote(
-                        test_id=test_id,
-                        iteration_no=iteration,
-                        model_name=ActiveLearning.normalize_model_name(base_model_id),
-                        train_data_size=len(all_labeled_samples),
-                        method=method_name,
-                        data_size=data_size,
-                        N=ActiveLearning.hyper_params.get("N"),
-                        T=ActiveLearning.hyper_params.get("T"),
-                        I=None,
-                        metrics={"accuracy": None, "selected_samples_avg_uncertainty": mean_selected_unc},
-                        params=stop_params,
-                        run_by=os.getenv("USER") or os.getenv("USERNAME"),
-                        notes=str(reason),
-                    )
-                    if not inserted_id:
-                        database.insert_test_result(
-                            test_id=test_id,
-                            iteration_no=iteration,
-                            model_name=ActiveLearning.normalize_model_name(base_model_id),
-                            train_data_size=len(all_labeled_samples),
-                            method=method_name,
-                            data_size=data_size,
-                            N=ActiveLearning.hyper_params.get("N"),
-                            T=ActiveLearning.hyper_params.get("T"),
-                            I=None,
-                            metrics={"accuracy": None, "selected_samples_avg_uncertainty": mean_selected_unc},
-                            params=stop_params,
-                            run_by=os.getenv("USER") or os.getenv("USERNAME"),
-                            notes=str(reason),
-                        )
-                except Exception as e:
-                    print(f"Warning: failed to insert stop row to DB: {e}")
-                break
+            # Do not stop immediately after labeling; train+evaluate once with the final labeled set.
 
             # 3. Modeli eğit / güncelle
             # Train and save into the run-specific model folder (overwrite each iteration)
@@ -1300,10 +1116,22 @@ class ActiveLearning:
             # 6. Sonuçları CSV'ye yaz
             result_file = ActiveLearning.get_next_result_file(test_folder)
 
-            # If this iteration hits max_iterations, persist it as a stop event (so DB/CSV contains the reason)
+            # Decide stop after we have evaluation metrics
             max_iters = int(ActiveLearning.hyper_params.get("max_iterations") or 0)
             max_iter_stop = (max_iters > 0 and iteration >= max_iters)
-            max_iter_reason = f"max_iterations_reached ({max_iters})" if max_iter_stop else "continue"
+            label_budget = ActiveLearning.hyper_params.get("label_budget")
+            budget_stop = isinstance(label_budget, int) and label_budget > 0 and len(all_labeled_samples) >= label_budget
+
+            stop_condition = bool(stop_after_iteration or max_iter_stop or budget_stop)
+            if stop_condition:
+                if stop_after_iteration:
+                    final_reason = stop_reason
+                elif budget_stop:
+                    final_reason = "label_budget"
+                else:
+                    final_reason = f"max_iterations_reached ({max_iters})"
+            else:
+                final_reason = "continue"
             with open(result_file, "w", newline="") as f:
                 writer = csv.DictWriter(f, fieldnames=[
                     "iteration", "n_labeled", "previous_accuracy", "new_accuracy", "stop_condition", "stop_reason"
@@ -1314,8 +1142,8 @@ class ActiveLearning:
                     "n_labeled": len(labeled_samples),
                     "previous_accuracy": previous_accuracy,
                     "new_accuracy": new_accuracy,
-                    "stop_condition": bool(max_iter_stop),
-                    "stop_reason": max_iter_reason,
+                    "stop_condition": stop_condition,
+                    "stop_reason": final_reason,
                 })
 
 # active_learning.py içinde (iteration loop içinde)
@@ -1363,7 +1191,7 @@ class ActiveLearning:
                     metrics=metrics,
                     params=params,
                     run_by=os.getenv("USER") or os.getenv("USERNAME"),
-                    notes=max_iter_reason,
+                    notes=final_reason,
                 )
                 
                 if inserted_id:
@@ -1383,7 +1211,7 @@ class ActiveLearning:
                         metrics=metrics,
                         params=params,
                         run_by=os.getenv("USER") or os.getenv("USERNAME"),
-                        notes=max_iter_reason,
+                        notes=final_reason,
                     )
                     print(f"Inserted result to LOCAL RAM DB: test_id={test_id}, iteration={iteration}, id={inserted_id}")
                     
@@ -1392,16 +1220,12 @@ class ActiveLearning:
 
             print(f"Iteration {iteration} results saved to {result_file}")
 
-            if max_iter_stop:
-                print(f"Reached maximum iterations ({max_iters})")
+            if stop_condition:
+                print(f"Stopping: {final_reason}")
                 break
 
             iteration += 1
             previous_accuracy = new_accuracy
-
-            if stop:
-                print(f"Stopping: {reason}")
-                break
 
             # max_iterations stop is handled above by persisting the final iteration row.
         
