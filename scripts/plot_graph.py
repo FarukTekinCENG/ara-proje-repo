@@ -123,7 +123,15 @@ def _plot_metric(
 
     plt.figure(figsize=(12, 5))
 
-    colors = cycle(["green", "blue", "purple", "orange", "brown", "gray"])
+    method_colors = {
+        "base_classifier": "red",
+        "BASE": "red",
+        "uncertainty_sampling": "blue",
+        "diversity_sampling": "green",
+        "query_by_comitee": "purple",
+        "random_sampling": "orange",
+    }
+
     used_labels = set()
     for i, row in test_df.iterrows():
         method = str(row.get("method", ""))
@@ -131,18 +139,18 @@ def _plot_metric(
         train_data_size = row.get("train_data_size", None)
         data_size = row.get("data_size", None)
 
-        if method == "base_classifier":
-            color = "red"
-        else:
-            color = next(colors)
+        color = method_colors.get(method, "gray")
 
         y = y_values[i] if i < len(y_values) else None
         plt.scatter(x_values[i], y, color=color, s=80, edgecolor="black", zorder=3)
 
-        label = f"{model_name} | method={method} | train_data_size={train_data_size} | data_size={data_size}"
-        if label not in used_labels:
-            plt.scatter([], [], color=color, label=label)
-            used_labels.add(label)
+        # Legend should not explode per-iteration; unique by model_name only.
+        key = model_name.strip() if model_name else ""
+        if not key:
+            key = method.strip() if method else "unknown"
+        if key not in used_labels:
+            plt.scatter([], [], color=color, label=key)
+            used_labels.add(key)
 
     plt.plot(x_values, y_values, color="black", linewidth=1, zorder=1)
 
