@@ -53,6 +53,17 @@ class ActiveLearning:
     ]
 
     @staticmethod
+    def normalize_model_name(model_name):
+        if model_name is None:
+            return "unknown"
+        s = str(model_name)
+        if not s:
+            return "unknown"
+        if " (" in s and s.endswith(")"):
+            return s.split(" (", 1)[0]
+        return s
+
+    @staticmethod
     def get_next_model_folder(base_path=None):
         base_path = base_path or ActiveLearning.TRAINED_BASE
         os.makedirs(base_path, exist_ok=True)
@@ -257,13 +268,12 @@ class ActiveLearning:
         else:
             trainer.initialize_model()
         
-        # MODEL ADI (DB/log için): HF base model + hangi local klasörden devam edildiği
+        # Persist only the base HF model id as model_name; run folder is already stored via params['run_model_dir']
         try:
             base_id = getattr(JobClassifierTrainer, "model_name", None) or getattr(trainer, "model_name", None) or "unknown"
         except Exception:
             base_id = "unknown"
-        run_name = os.path.basename(source_model_dir.rstrip("/"))
-        trainer.model_name = f"{base_id} ({run_name})"
+        trainer.model_name = str(base_id)
 
         # DEBUG: Check what we have in samples
         if samples and len(samples) > 0:
@@ -872,6 +882,11 @@ class ActiveLearning:
         # ============================================================
         base_accuracy = None
 
+        try:
+            base_model_id = getattr(JobClassifierTrainer, "model_name", None) or "unknown"
+        except Exception:
+            base_model_id = "unknown"
+
         if test_samples:
             try:
                 print(f"Evaluating BASE classifier on test set ({len(test_samples)} samples)...")
@@ -937,7 +952,7 @@ class ActiveLearning:
             inserted_remote_id = database.insert_test_result_remote(
                 test_id=test_id,
                 iteration_no=0,
-                model_name="base_classifier",
+                model_name=ActiveLearning.normalize_model_name(base_model_id),
                 train_data_size=0,
                 method="BASE",
                 data_size=data_size,
@@ -957,7 +972,7 @@ class ActiveLearning:
                 inserted_local_id = database.insert_test_result(
                     test_id=test_id,
                     iteration_no=0,
-                    model_name="base_classifier",
+                    model_name=ActiveLearning.normalize_model_name(base_model_id),
                     train_data_size=0,
                     method="BASE",
                     data_size=data_size,
@@ -1005,6 +1020,48 @@ class ActiveLearning:
                         "stop_condition": True,
                         "stop_reason": reason,
                     })
+
+                try:
+                    stop_params = {
+                        "run_model_dir": current_model_dir,
+                        "test_folder": test_folder,
+                        "previous_accuracy": previous_accuracy,
+                        "method": method_name,
+                        "DATA_SIZE": data_size,
+                    }
+                    inserted_id = database.insert_test_result_remote(
+                        test_id=test_id,
+                        iteration_no=iteration,
+                        model_name=ActiveLearning.normalize_model_name(base_model_id),
+                        train_data_size=len(all_labeled_samples),
+                        method=method_name,
+                        data_size=data_size,
+                        N=ActiveLearning.hyper_params.get("N"),
+                        T=ActiveLearning.hyper_params.get("T"),
+                        I=None,
+                        metrics={"accuracy": None},
+                        params=stop_params,
+                        run_by=os.getenv("USER") or os.getenv("USERNAME"),
+                        notes=str(reason),
+                    )
+                    if not inserted_id:
+                        database.insert_test_result(
+                            test_id=test_id,
+                            iteration_no=iteration,
+                            model_name=ActiveLearning.normalize_model_name(base_model_id),
+                            train_data_size=len(all_labeled_samples),
+                            method=method_name,
+                            data_size=data_size,
+                            N=ActiveLearning.hyper_params.get("N"),
+                            T=ActiveLearning.hyper_params.get("T"),
+                            I=None,
+                            metrics={"accuracy": None},
+                            params=stop_params,
+                            run_by=os.getenv("USER") or os.getenv("USERNAME"),
+                            notes=str(reason),
+                        )
+                except Exception as e:
+                    print(f"Warning: failed to insert stop row to DB: {e}")
                 break
             
             # 1. Model tahmini (use current_model_dir)
@@ -1060,6 +1117,48 @@ class ActiveLearning:
                         "stop_condition": True,
                         "stop_reason": reason,
                     })
+
+                try:
+                    stop_params = {
+                        "run_model_dir": current_model_dir,
+                        "test_folder": test_folder,
+                        "previous_accuracy": previous_accuracy,
+                        "method": method_name,
+                        "DATA_SIZE": data_size,
+                    }
+                    inserted_id = database.insert_test_result_remote(
+                        test_id=test_id,
+                        iteration_no=iteration,
+                        model_name=ActiveLearning.normalize_model_name(base_model_id),
+                        train_data_size=len(all_labeled_samples),
+                        method=method_name,
+                        data_size=data_size,
+                        N=ActiveLearning.hyper_params.get("N"),
+                        T=ActiveLearning.hyper_params.get("T"),
+                        I=None,
+                        metrics={"accuracy": None, "selected_samples_avg_uncertainty": mean_selected_unc},
+                        params=stop_params,
+                        run_by=os.getenv("USER") or os.getenv("USERNAME"),
+                        notes=str(reason),
+                    )
+                    if not inserted_id:
+                        database.insert_test_result(
+                            test_id=test_id,
+                            iteration_no=iteration,
+                            model_name=ActiveLearning.normalize_model_name(base_model_id),
+                            train_data_size=len(all_labeled_samples),
+                            method=method_name,
+                            data_size=data_size,
+                            N=ActiveLearning.hyper_params.get("N"),
+                            T=ActiveLearning.hyper_params.get("T"),
+                            I=None,
+                            metrics={"accuracy": None, "selected_samples_avg_uncertainty": mean_selected_unc},
+                            params=stop_params,
+                            run_by=os.getenv("USER") or os.getenv("USERNAME"),
+                            notes=str(reason),
+                        )
+                except Exception as e:
+                    print(f"Warning: failed to insert stop row to DB: {e}")
                 break
 
             # ara adim: veriyi etiketle
@@ -1087,6 +1186,48 @@ class ActiveLearning:
                         "stop_condition": True,
                         "stop_reason": reason,
                     })
+
+                try:
+                    stop_params = {
+                        "run_model_dir": current_model_dir,
+                        "test_folder": test_folder,
+                        "previous_accuracy": previous_accuracy,
+                        "method": method_name,
+                        "DATA_SIZE": data_size,
+                    }
+                    inserted_id = database.insert_test_result_remote(
+                        test_id=test_id,
+                        iteration_no=iteration,
+                        model_name=ActiveLearning.normalize_model_name(base_model_id),
+                        train_data_size=len(all_labeled_samples),
+                        method=method_name,
+                        data_size=data_size,
+                        N=ActiveLearning.hyper_params.get("N"),
+                        T=ActiveLearning.hyper_params.get("T"),
+                        I=None,
+                        metrics={"accuracy": None, "selected_samples_avg_uncertainty": mean_selected_unc},
+                        params=stop_params,
+                        run_by=os.getenv("USER") or os.getenv("USERNAME"),
+                        notes=str(reason),
+                    )
+                    if not inserted_id:
+                        database.insert_test_result(
+                            test_id=test_id,
+                            iteration_no=iteration,
+                            model_name=ActiveLearning.normalize_model_name(base_model_id),
+                            train_data_size=len(all_labeled_samples),
+                            method=method_name,
+                            data_size=data_size,
+                            N=ActiveLearning.hyper_params.get("N"),
+                            T=ActiveLearning.hyper_params.get("T"),
+                            I=None,
+                            metrics={"accuracy": None, "selected_samples_avg_uncertainty": mean_selected_unc},
+                            params=stop_params,
+                            run_by=os.getenv("USER") or os.getenv("USERNAME"),
+                            notes=str(reason),
+                        )
+                except Exception as e:
+                    print(f"Warning: failed to insert stop row to DB: {e}")
                 break
 
             # 3. Modeli eğit / güncelle
@@ -1212,7 +1353,7 @@ class ActiveLearning:
                 inserted_id = database.insert_test_result_remote(
                     test_id=test_id,
                     iteration_no=iteration,
-                    model_name=getattr(trainer_obj, "model_name", None) or "unknown",
+                    model_name=ActiveLearning.normalize_model_name(getattr(trainer_obj, "model_name", None) or base_model_id),
                     train_data_size=len(all_labeled_samples),
                     method=method_name,
                     data_size=data_size,
@@ -1232,7 +1373,7 @@ class ActiveLearning:
                     inserted_id = database.insert_test_result(
                         test_id=test_id,
                         iteration_no=iteration,
-                        model_name=getattr(trainer_obj, "model_name", None) or "unknown",
+                        model_name=ActiveLearning.normalize_model_name(getattr(trainer_obj, "model_name", None) or base_model_id),
                         train_data_size=len(all_labeled_samples),
                         method=method_name,
                         data_size=data_size,
