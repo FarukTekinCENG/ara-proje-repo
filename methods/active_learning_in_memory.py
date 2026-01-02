@@ -633,16 +633,55 @@ class ActiveLearning:
 
     @staticmethod
     def query_by_comitee(max_samples=MAX_SAMPLES):
-        import collections
-        from collections import defaultdict
         import math
 
         N = ActiveLearning.hyper_params.get("N", 5)
         models = ActiveLearning.model_list
-        committee_predictions = {}
+
+        # Store full probability distributions per committee member per pool_id.
+        # committee_probs[model_idx][pool_id] = probs (list[float])
+        committee_probs = {}
+
+        def _normalize_probs(p):
+            try:
+                probs = [float(x) for x in (p or [])]
+                s = sum(probs)
+                if s <= 0:
+                    return None
+                return [x / s for x in probs]
+            except Exception:
+                return None
+
+        def _kl_div(p, q, eps=1e-12):
+            # KL(p || q)
+            kl = 0.0
+            for pi, qi in zip(p, q):
+                pi = float(pi)
+                qi = float(qi)
+                if pi <= 0:
+                    continue
+                kl += pi * math.log(pi / (qi + eps) + eps)
+            return float(kl)
+
+        def _js_div(probs_list):
+            # Jensen-Shannon divergence across multiple distributions.
+            # We use mean distribution M and average KL(P_i || M).
+            if not probs_list or len(probs_list) < 2:
+                return None
+            k = len(probs_list[0])
+            m = [0.0] * k
+            for p in probs_list:
+                for i in range(k):
+                    m[i] += float(p[i])
+            denom = float(len(probs_list))
+            m = [x / denom for x in m]
+            js = 0.0
+            for p in probs_list:
+                js += _kl_div(p, m)
+            return float(js / denom)
 
         try:
-            # 2️⃣ Load each model & make predictions
+            # Load each model & make predictions on (up to) max_samples unlabelled pool items.
             for idx, model_name in enumerate(models):
                 predictor = ModelPredictor(model_name)
                 try:
@@ -655,16 +694,13 @@ class ActiveLearning:
                 batch_size = 1000
                 page = 0
                 total_processed = 0
-                
-                # Bu model için tüm tahminleri sakla
-                model_predictions = {}
+                model_probs = {}
 
                 while True:
                     batch = database.get_unlabelled_samples(batch_size, page * batch_size)
                     if not batch or (max_samples is not None and total_processed >= max_samples):
                         break
 
-                    # max_samples kontrolü
                     if max_samples is not None:
                         remaining = max_samples - total_processed
                         if len(batch) > remaining:
@@ -676,55 +712,42 @@ class ActiveLearning:
                             continue
                         try:
                             res = predictor.predict(text=desc)
-                            pred = res.get("predicted_class")
-                            probs = res.get("probs")
-                            if probs:
-                                ent = -sum([p * math.log(p + 1e-12) for p in probs])
-                                unc = float(ent)
-                            else:
-                                unc = 1 - res.get("confidence", 1.0)
+                            probs = _normalize_probs(res.get("probs"))
+                            if probs is not None:
+                                model_probs[pool_id] = probs
                         except Exception as e:
                             print(f"[committee] prediction error member {idx} id {pool_id}: {e}")
-                            pred = None
-                            unc = None
-                        model_predictions[pool_id] = (pred, unc)
 
                     total_processed += len(batch)
                     page += 1
-                
-                committee_predictions[idx] = model_predictions
 
-            # 3️⃣ Aggregate member predictions and compute disagreement
-            preds_by_id = defaultdict(list)
-            uncert_by_id = defaultdict(list)
-            
-            for model_idx, predictions in committee_predictions.items():
-                for pool_id, (mpred, unc) in predictions.items():
-                    preds_by_id[pool_id].append(mpred)
-                    if unc is not None:
-                        uncert_by_id[pool_id].append(float(unc))
+                if model_probs:
+                    committee_probs[idx] = model_probs
 
-            # 4️⃣ Compute disagreement score and select top-N
+            # Aggregate per pool_id and compute disagreement.
+            probs_by_id = {}
+            for _, model_map in committee_probs.items():
+                for pid, probs in model_map.items():
+                    probs_by_id.setdefault(pid, []).append(probs)
+
             scored = []
-            for pid, preds in preds_by_id.items():
-                # None olmayan tahminleri say
-                valid_preds = [p for p in preds if p is not None]
-                if not valid_preds:
+            for pid, probs_list in probs_by_id.items():
+                if not probs_list or len(probs_list) < 2:
                     continue
-
-                # Committee disagreement: vote entropy (higher => more disagreement)
-                counts = collections.Counter(valid_preds)
-                total = sum(counts.values())
-                vote_entropy = 0.0
-                if total > 0:
-                    for c in counts.values():
-                        p = c / total
-                        vote_entropy += -p * math.log(p + 1e-12)
-
-                # Tie-breaker: avg member uncertainty (if available)
-                avg_unc = (sum(uncert_by_id[pid]) / len(uncert_by_id[pid])) if pid in uncert_by_id and uncert_by_id[pid] else 0.0
-
-                scored.append((pid, (vote_entropy, avg_unc)))
+                js = _js_div(probs_list)
+                if js is None:
+                    continue
+                # Tie-breaker: encourage samples whose mean distribution is uncertain.
+                # (entropy of mean probs)
+                k = len(probs_list[0])
+                m = [0.0] * k
+                for p in probs_list:
+                    for i in range(k):
+                        m[i] += float(p[i])
+                denom = float(len(probs_list))
+                m = [x / denom for x in m]
+                mean_entropy = -sum([pi * math.log(pi + 1e-12) for pi in m if pi > 0])
+                scored.append((pid, (float(js), float(mean_entropy))))
 
             scored.sort(key=lambda x: (x[1][0], x[1][1]), reverse=True)
             selected_ids = [s[0] for s in scored[:N]]
@@ -732,8 +755,6 @@ class ActiveLearning:
             if not selected_ids:
                 return []
 
-            # 5️⃣ Fetch full sample rows from database
-            # Attach committee disagreement score into returned tuple's uncertainty_score field.
             disagreement_by_id = {pid: float(v[0]) for pid, v in scored}
             selected_samples = []
             for sample in database.pool:
@@ -748,12 +769,8 @@ class ActiveLearning:
                         selected_samples.append(sample)
 
             return selected_samples
-
-        except Exception as e:
-            print(f"Error in query_by_comitee: {e}")
-            import traceback
-            traceback.print_exc()
-            return []
+        finally:
+            pass
 
     @staticmethod
     def run(function_algorithm, max_samples=None, test_samples=None, test_sample_limit=TEST_SAMPLE_LIMIT, test_from_db=True, base_train_size=BASE_TRAIN_SIZE):
