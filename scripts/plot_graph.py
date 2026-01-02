@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from itertools import cycle
 import os
 import argparse
+from matplotlib.ticker import MultipleLocator
 from typing import Any, Dict, List, Optional
 
 def _safe_json_loads(x: Any) -> Dict[str, Any]:
@@ -162,6 +163,90 @@ def _plot_metric(
         ylabel = "Accuracy (%)"
     plt.ylabel(ylabel)
 
+    if metric == "accuracy" and accuracy_percent:
+        plt.ylim(0, 100)
+        plt.gca().yaxis.set_major_locator(MultipleLocator(10))
+    else:
+        plt.ylim(0, 1)
+        plt.gca().yaxis.set_major_locator(MultipleLocator(0.1))
+
+    def _last_non_null(series: pd.Series) -> Optional[Any]:
+        try:
+            for v in reversed(series.tolist()):
+                if v is None:
+                    continue
+                if isinstance(v, float) and pd.isna(v):
+                    continue
+                return v
+        except Exception:
+            return None
+        return None
+
+    def _fmt_intish(v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, float) and pd.isna(v):
+            return None
+        try:
+            if isinstance(v, (int,)):
+                return str(int(v))
+            if isinstance(v, float):
+                if float(v).is_integer():
+                    return str(int(v))
+                return str(v)
+            s = str(v).strip()
+            if not s:
+                return None
+            f = float(s)
+            if f.is_integer():
+                return str(int(f))
+            return s
+        except Exception:
+            try:
+                return str(v)
+            except Exception:
+                return None
+
+    method_name = None
+    if "method" in test_df.columns:
+        try:
+            methods = [str(m) for m in test_df["method"].tolist() if m is not None and not (isinstance(m, float) and pd.isna(m))]
+            for m in methods:
+                if m.upper() == "BASE" or m == "base_classifier":
+                    continue
+                if m.strip():
+                    method_name = m.strip()
+                    break
+        except Exception:
+            method_name = None
+
+    method_pretty_map = {
+        "uncertainty_sampling": "Uncertainty Sampling",
+        "diversity_sampling": "Diversity Sampling",
+        "query_by_comitee": "Query by Comitee",
+        "random_sampling": "Random Sampling",
+    }
+    method_pretty = method_pretty_map.get(method_name or "", method_name or "Unknown Method")
+
+    pool_size = None
+    if "data_size" in test_df.columns:
+        pool_size = _last_non_null(test_df["data_size"])
+
+    train_data_size = None
+    if "train_data_size" in test_df.columns:
+        train_data_size = _last_non_null(test_df["train_data_size"])
+
+    n_value = None
+    if "n" in test_df.columns:
+        n_value = _last_non_null(test_df["n"])
+    if n_value is None and "params_dict" in test_df.columns:
+        try:
+            last_params = _last_non_null(test_df["params_dict"])
+            if isinstance(last_params, dict):
+                n_value = last_params.get("N", None)
+        except Exception:
+            n_value = None
+
     stop_reason = None
     for col in ["stop_reason", "notes", "stop_condition"]:
         if col in test_df.columns:
@@ -173,14 +258,39 @@ def _plot_metric(
             except Exception:
                 pass
 
-    title = f"{metric} Plot - Graph {test_idx}"
+    metric_pretty_map = {
+        "accuracy": "Accuracy",
+        "macro_f1": "Macro F1",
+        "avg_uncertainty_pool": "Average Uncertainty of Pool",
+        "avg_uncertainty": "Average Uncertainty of Pool",
+        "selected_samples_avg_uncertainty": "Average Uncertainty of Selected Batch",
+    }
+    metric_pretty = metric_pretty_map.get(metric, metric)
+    title_main = f"{method_pretty} {metric_pretty} Graph"
+
+    title_parts = [title_main]
+    pool_size_s = _fmt_intish(pool_size)
+    if pool_size_s is not None:
+        title_parts.append(f"pool_size={pool_size_s}")
+    train_data_size_s = _fmt_intish(train_data_size)
+    if train_data_size_s is not None:
+        title_parts.append(f"train_data_size={train_data_size_s}")
+    n_value_s = _fmt_intish(n_value)
+    if n_value_s is not None:
+        title_parts.append(f"n={n_value_s}")
     if stop_reason:
-        title = f"{title} | stop={stop_reason}"
+        title_parts.append(f"stop reason={stop_reason}")
+
+    title = " | ".join(title_parts)
     plt.title(title)
     plt.legend(loc="best", fontsize=8)
     plt.grid(True)
 
     file_name = f"{metric}.jpeg"
+    if metric == "avg_uncertainty":
+        file_name = "avg_uncertainty_pool.jpeg"
+    elif metric == "selected_samples_avg_uncertainty":
+        file_name = "avg_uncertainty_seledceted_samples.jpeg"
     out_path = os.path.join(output_dir, file_name)
     plt.savefig(out_path)
     plt.close()
@@ -220,6 +330,9 @@ def main() -> int:
         raise KeyError("Input file must contain a 'metrics' column")
     df["metrics_dict"] = df["metrics"].apply(_safe_json_loads)
 
+    if "params" in df.columns:
+        df["params_dict"] = df["params"].apply(_safe_json_loads)
+
     # Kayıt dizini
     result_folder = _derive_result_folder_name(args.input)
     base_output_dir = args.output_dir
@@ -243,6 +356,8 @@ def main() -> int:
                 metric_keys.update(d.keys())
 
         for metric in sorted(metric_keys):
+            if metric == "avg_uncertainty_pool":
+                continue
             _plot_metric(
                 test_idx=idx,
                 test_df=test_df,
