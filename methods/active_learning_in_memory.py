@@ -747,7 +747,13 @@ class ActiveLearning:
                 denom = float(len(probs_list))
                 m = [x / denom for x in m]
                 mean_entropy = -sum([pi * math.log(pi + 1e-12) for pi in m if pi > 0])
-                scored.append((pid, (float(js), float(mean_entropy))))
+                # Normalize entropy to [0, 1] by dividing by log(K)
+                ent_norm = None
+                try:
+                    ent_norm = float(mean_entropy) / float(math.log(float(k) + 1e-12))
+                except Exception:
+                    ent_norm = None
+                scored.append((pid, (float(js), float(mean_entropy), ent_norm)))
 
             scored.sort(key=lambda x: (x[1][0], x[1][1]), reverse=True)
             selected_ids = [s[0] for s in scored[:N]]
@@ -755,7 +761,16 @@ class ActiveLearning:
             if not selected_ids:
                 return []
 
-            disagreement_by_id = {pid: float(v[0]) for pid, v in scored}
+            disagreement_by_id = {}
+            for pid, v in scored:
+                try:
+                    ent_norm = v[2]
+                    if ent_norm is None:
+                        disagreement_by_id[pid] = float(v[0])
+                    else:
+                        disagreement_by_id[pid] = float(ent_norm)
+                except Exception:
+                    disagreement_by_id[pid] = float(v[0])
             selected_samples = []
             for sample in database.pool:
                 if sample[0] in selected_ids:
