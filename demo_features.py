@@ -135,14 +135,12 @@ class DemoFeatures:
 
         preds_df = self.predict_many(test_df[description_col])
         out_df = test_df.copy()
-        out_df = out_df.rename(columns={description_col: "description", label_col: "true_label"})
-
+        # Keep original column names, don't rename them
         out_df["predicted_class"] = preds_df["predicted_class"].astype(int)
         out_df["predicted_label"] = preds_df["predicted_label"]
         out_df["confidence"] = preds_df["confidence"].astype(float)
 
-        # Correctness: if true labels are strings, compare to predicted_label.
-        # If they are numeric, compare to predicted_class.
+        # Correctness: compare using the actual label column name
         def _is_intish(x: Any) -> bool:
             try:
                 if x is None:
@@ -155,12 +153,12 @@ class DemoFeatures:
             except Exception:
                 return False
 
-        true_is_numeric = out_df["true_label"].map(_is_intish).all()
+        true_is_numeric = out_df[label_col].map(_is_intish).all()
         if true_is_numeric:
-            out_df["true_label_int"] = out_df["true_label"].map(lambda x: int(float(x)))
+            out_df["true_label_int"] = out_df[label_col].map(lambda x: int(float(x)))
             out_df["is_correct"] = out_df["true_label_int"].astype(int) == out_df["predicted_class"].astype(int)
         else:
-            out_df["is_correct"] = out_df["true_label"].astype(str) == out_df["predicted_label"].astype(str)
+            out_df["is_correct"] = out_df[label_col].astype(str) == out_df["predicted_label"].astype(str)
 
         accuracy = float(out_df["is_correct"].mean()) if len(out_df) else 0.0
         return out_df, accuracy
@@ -198,11 +196,11 @@ class DemoFeatures:
         if sample_size and sample_size < len(test_df):
             test_df = test_df.sample(n=sample_size, random_state=42).reset_index(drop=True)
         
-        # Evaluate
+        # Evaluate - use the actual column names from the loaded dataframe
         results_df, accuracy = self.evaluate(
             test_df, 
-            description_col="description", 
-            label_col="label"
+            description_col=text_column,  # Use original column name
+            label_col=label_column        # Use original column name
         )
         
         # Calculate additional metrics
@@ -215,9 +213,9 @@ class DemoFeatures:
         
         # Per-class accuracy
         if not results_df.empty:
-            if "true_label" in results_df.columns:
-                for label in results_df["true_label"].unique():
-                    label_mask = results_df["true_label"] == label
+            if label_column in results_df.columns:  # Use actual label column name
+                for label in results_df[label_column].unique():
+                    label_mask = results_df[label_column] == label
                     if label_mask.sum() > 0:
                         label_accuracy = results_df[label_mask]["is_correct"].mean()
                         metrics["per_class_accuracy"][str(label)] = float(label_accuracy)
