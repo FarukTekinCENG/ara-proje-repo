@@ -760,28 +760,10 @@ class ActiveLearning:
 
             if not selected_ids:
                 return []
-
-            disagreement_by_id = {}
-            for pid, v in scored:
-                try:
-                    ent_norm = v[2]
-                    if ent_norm is None:
-                        disagreement_by_id[pid] = float(v[0])
-                    else:
-                        disagreement_by_id[pid] = float(ent_norm)
-                except Exception:
-                    disagreement_by_id[pid] = float(v[0])
             selected_samples = []
             for sample in database.pool:
                 if sample[0] in selected_ids:
-                    try:
-                        sample_list = list(sample)
-                        # sample = (id, description, is_labelled, label, model_prediction, uncertainty_score)
-                        if len(sample_list) >= 6:
-                            sample_list[5] = disagreement_by_id.get(sample[0], sample_list[5])
-                        selected_samples.append(tuple(sample_list))
-                    except Exception:
-                        selected_samples.append(sample)
+                    selected_samples.append(sample)
 
             return selected_samples
         finally:
