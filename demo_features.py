@@ -164,3 +164,108 @@ class DemoFeatures:
 
         accuracy = float(out_df["is_correct"].mean()) if len(out_df) else 0.0
         return out_df, accuracy
+
+    def evaluate_on_csv(
+        self,
+        csv_path: str,
+        text_column: str = "description",
+        label_column: str = "formatted_work_type",
+        sample_size: Optional[int] = None,
+        encoding: str = "utf-8"
+    ) -> Tuple[float, Dict[str, Any]]:
+        """
+        Evaluate model on CSV dataset
+        
+        Args:
+            csv_path: Path to CSV file
+            text_column: Name of text column
+            label_column: Name of label column
+            sample_size: Optional sample size for faster testing
+            encoding: File encoding
+        
+        Returns:
+            Tuple of (accuracy, metrics_dict)
+        """
+        # Load test data
+        test_df = self.load_test_df(
+            csv_path, 
+            description_col=text_column, 
+            label_col=label_column,
+            encoding=encoding
+        )
+        
+        # Optional sampling
+        if sample_size and sample_size < len(test_df):
+            test_df = test_df.sample(n=sample_size, random_state=42).reset_index(drop=True)
+        
+        # Evaluate
+        results_df, accuracy = self.evaluate(
+            test_df, 
+            description_col="description", 
+            label_col="label"
+        )
+        
+        # Calculate additional metrics
+        metrics = {
+            "total_samples": len(results_df),
+            "correct_predictions": int(results_df["is_correct"].sum()),
+            "accuracy": accuracy,
+            "per_class_accuracy": {}
+        }
+        
+        # Per-class accuracy
+        if not results_df.empty:
+            if "true_label" in results_df.columns:
+                for label in results_df["true_label"].unique():
+                    label_mask = results_df["true_label"] == label
+                    if label_mask.sum() > 0:
+                        label_accuracy = results_df[label_mask]["is_correct"].mean()
+                        metrics["per_class_accuracy"][str(label)] = float(label_accuracy)
+        
+        # Confidence statistics
+        if "confidence" in results_df.columns:
+            metrics["mean_confidence"] = float(results_df["confidence"].mean())
+            metrics["confidence_std"] = float(results_df["confidence"].std())
+        
+        return accuracy, metrics
+
+    def predict_single(self, text: str) -> Dict[str, Any]:
+        """
+        Convenience method for single prediction
+        
+        Args:
+            text: Input text
+        
+        Returns:
+            Dict with prediction results
+        """
+        result = self.predict_one(text)
+        return {
+            "predicted_class": result.predicted_class,
+            "predicted_label": result.predicted_label,
+            "confidence": result.confidence,
+            "probs": result.probs
+        }
+
+    def predict_batch(self, texts: List[str]) -> List[Dict[str, Any]]:
+        """
+        Convenience method for batch prediction
+        
+        Args:
+            texts: List of input texts
+        
+        Returns:
+            List of prediction result dicts
+        """
+        results_df = self.predict_many(texts)
+        results = []
+        
+        for _, row in results_df.iterrows():
+            results.append({
+                "predicted_class": row["predicted_class"],
+                "predicted_label": row["predicted_label"],
+                "confidence": row["confidence"],
+                "probs": row["probs"]
+            })
+        
+        return results
