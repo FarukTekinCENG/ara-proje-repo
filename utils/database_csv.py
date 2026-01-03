@@ -171,7 +171,7 @@ class RAMDatabase:
             print(f"Successfully loaded {loaded_count} records from {csv_path}")
 
             # Test seti oluştur
-            self.split_pool_to_test(test_size=500)
+            self.split_pool_to_test(test_size=500, seed=None)
             
         except Exception as e:
             print(f"Error loading CSV: {e}")
@@ -212,7 +212,7 @@ class RAMDatabase:
             self.next_id += 1
         
         print(f"Created {num_samples} sample records")
-        self.split_pool_to_test(test_size=500)
+        self.split_pool_to_test(test_size=500, seed=None)
     
     def get_unlabelled_samples(self, batch_size: int = 1000, offset: int = 0) -> List[Tuple]:
         """
@@ -423,7 +423,8 @@ class RAMDatabase:
         """
         Pool'dan rastgele test seti oluştur
         """
-        random.seed(seed)
+        if seed is not None:
+            random.seed(seed)
         
         # Etiketli ve açıklaması olan örnekleri al
         candidates = [record for record in self.pool if record[1] and record[3]]
@@ -477,7 +478,7 @@ class RAMDatabase:
         
         return counts
     
-    def initialize_labeled_pool(self, initial_size: int = 100):
+    def initialize_labeled_pool(self, initial_size: int = 100, seed: int = 42):
         """
         Başlangıç için rastgele örnekleri etiketli olarak işaretle
         """
@@ -496,6 +497,8 @@ class RAMDatabase:
         n = min(initial_size, len(unlabelled), fraction_cap)
         
         # Rastgele seç
+        if seed is not None:
+            random.seed(seed)
         selected = random.sample(unlabelled, n)
         selected_ids = [record[0] for record in selected]
         

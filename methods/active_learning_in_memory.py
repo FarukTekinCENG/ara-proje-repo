@@ -26,21 +26,21 @@ except Exception as e:
 # ⚙️ CONFIGURABLE PARAMETERS
 MAX_SAMPLES = 3000
 TEST_SAMPLE_LIMIT = 500
-BASE_TRAIN_SIZE = 20
+BASE_TRAIN_SIZE = 10
 
 class ActiveLearning:
     hyper_params = {
-        "N": 50,         # number of samples selected each iteration
+        "N": 10,         # number of samples selected each iteration
         "T": 0.01,        # model prediction un-certainty threshold
         "T_patience": 3,  # stop if mean_uncertainty(selected_batch) < T for this many consecutive iterations
         "uncertainty_plateau_eps": 0.01,  # stop if selected batch mean uncertainty stops decreasing (min drop)
-        "uncertainty_plateau_patience": 5,  # consecutive iterations with <eps improvement before stop
+        "uncertainty_plateau_patience": 7,  # consecutive iterations with <eps improvement before stop
         "accuracy_threshold": None,  # optional: stop if test accuracy >= threshold (None disables)
-        "label_budget": 1500, # None,  # optional hard budget on total labelled samples used for training
-        "max_iterations": 30,  # maximum number of iterations
+        "label_budget": 3000, # None,  # optional hard budget on total labelled samples used for training
+        "max_iterations": 300,  # maximum number of iterations
         "stratified_batch": False,  # make per-iteration selected batch roughly class-balanced
-        "seed": 42,
-        "deterministic": True,
+        "seed": None,
+        "deterministic": False,
         "predict_batch_size": 5000,
         "verbose_pages": False,
     }
@@ -170,6 +170,7 @@ class ActiveLearning:
         train_size=500,
         base_dir=None,
         source="db",
+        seed=None,
     ):
         """
         Initialize AND train base classifier with MINIMAL task adaptation.
@@ -184,6 +185,8 @@ class ActiveLearning:
         # Seed: mark a small subset of pool as labelled so we can train a base model.
         # In the original design, the whole pool starts FALSE; samples become TRUE only when used for training.
         try:
+            if seed is not None:
+                random.seed(seed)
             seed_candidates = [r for r in database.pool if r[2] == 'FALSE' and r[3] is not None and r[1]]
             seed_n = min(train_size, len(seed_candidates))
             if seed_n <= 0:
@@ -606,15 +609,18 @@ class ActiveLearning:
 
     @staticmethod
     def set_seeds(seed: int = 42, deterministic: bool = False):
-        random.seed(seed)
+        if seed is not None:
+            random.seed(seed)
         try:
             import numpy as np
-            np.random.seed(seed)
+            if seed is not None:
+                np.random.seed(seed)
         except Exception:
             pass
         try:
             import torch
-            torch.manual_seed(seed)
+            if seed is not None:
+                torch.manual_seed(seed)
             if torch.cuda.is_available():
                 torch.cuda.manual_seed_all(seed)
             if deterministic:
@@ -812,6 +818,7 @@ class ActiveLearning:
             ActiveLearning.initialize_and_train_base_classifier(
                 train_size=base_train_size,          # 🔧 PARAMETRE
                 base_dir=ActiveLearning.BASE_DIR,
+                seed=ActiveLearning.hyper_params.get("seed"),
             )
 
         # Ensure committee member local paths exist: copy base classifier into missing local dirs
@@ -1269,10 +1276,10 @@ if __name__ == '__main__':
     print(f"Labelled samples: {len(database.get_labeled_samples())}")
     
     methods = [
-        ActiveLearning.uncertainty_sampling,
-        ActiveLearning.diversity_sampling,
-        ActiveLearning.query_by_comitee,
-        #ActiveLearning.random_sampling,
+        # ActiveLearning.uncertainty_sampling,
+        # ActiveLearning.diversity_sampling,
+        # ActiveLearning.query_by_comitee,
+        ActiveLearning.random_sampling,
     ]
 
     for m in methods:
