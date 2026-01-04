@@ -297,6 +297,230 @@ def _plot_metric(
     return out_path
 
 
+def _plot_combined_recalls(
+    test_idx: int,
+    test_df: pd.DataFrame,
+    output_dir: str,
+) -> List[str]:
+    """
+    Plot recall metrics in 2 separate graphs (3-4 classes each)
+    Returns list of generated file paths
+    """
+    if "metrics_dict" not in test_df.columns:
+        return []
+
+    x_col = None
+    if "iteration_no" in test_df.columns:
+        x_col = "iteration_no"
+    elif "train_data_size" in test_df.columns:
+        x_col = "train_data_size"
+
+    x_values = (
+        test_df[x_col].tolist()
+        if x_col is not None
+        else list(range(len(test_df)))
+    )
+
+    # Find all recall metrics
+    recall_metrics = []
+    for d in test_df["metrics_dict"].tolist():
+        if isinstance(d, dict):
+            for key in d.keys():
+                if key.startswith("recall_") and key not in recall_metrics:
+                    recall_metrics.append(key)
+    
+    if not recall_metrics:
+        return []
+
+    # Split recall metrics into 2 groups
+    mid_point = len(recall_metrics) // 2
+    group1_metrics = recall_metrics[:mid_point] if mid_point > 0 else recall_metrics[:len(recall_metrics)//2 + 1]
+    group2_metrics = recall_metrics[mid_point:] if len(recall_metrics) > mid_point else []
+
+    # Prepare data for each recall metric
+    recall_data = {}
+    for metric in recall_metrics:
+        y_values = []
+        for d in test_df["metrics_dict"].tolist():
+            val = None
+            if isinstance(d, dict):
+                val = d.get(metric)
+            y_values.append(val)
+        recall_data[metric] = y_values
+
+    generated_files = []
+    
+    # Plot Group 1
+    if group1_metrics:
+        file_path = _plot_recall_group(
+            test_df, group1_metrics, recall_data, x_values, 
+            output_dir, "1", x_col
+        )
+        if file_path:
+            generated_files.append(file_path)
+    
+    # Plot Group 2  
+    if group2_metrics:
+        file_path = _plot_recall_group(
+            test_df, group2_metrics, recall_data, x_values,
+            output_dir, "2", x_col
+        )
+        if file_path:
+            generated_files.append(file_path)
+
+    return generated_files
+
+
+def _plot_recall_group(
+    test_df: pd.DataFrame,
+    recall_metrics: List[str],
+    recall_data: Dict[str, List[float]],
+    x_values: List[int],
+    output_dir: str,
+    group_num: str,
+    x_col: Optional[str]
+) -> Optional[str]:
+    """Helper function to plot a group of recall metrics"""
+    
+    # Check if all recall values are None/NaN
+    all_empty = True
+    for metric in recall_metrics:
+        if any(v is not None and not (isinstance(v, float) and pd.isna(v)) for v in recall_data[metric]):
+            all_empty = False
+            break
+    
+    if all_empty:
+        return None
+
+    plt.figure(figsize=(12, 6))
+
+    # Colors for different recall metrics
+    colors = cycle(['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan'])
+    
+    # Plot each recall metric
+    for i, metric in enumerate(recall_metrics):
+        color = next(colors)
+        y_values = recall_data[metric]
+        
+        # Extract class name from metric name (recall_class_name -> class_name)
+        class_name = metric.replace("recall_", "").replace("_", " ").title()
+        
+        # Plot line and points
+        plt.plot(x_values, y_values, color=color, linewidth=2, label=class_name, marker='o', markersize=4)
+    
+    # Formatting
+    xlabel = x_col if x_col is not None else "Iteration"
+    plt.xlabel(xlabel)
+    plt.ylabel("Recall")
+    plt.ylim(0, 1)
+    plt.gca().yaxis.set_major_locator(MultipleLocator(0.1))
+    
+    # Title
+    method_name = None
+    if "method" in test_df.columns:
+        try:
+            methods = [str(m) for m in test_df["method"].tolist() if m is not None and not (isinstance(m, float) and pd.isna(m))]
+            for m in methods:
+                if m.upper() == "BASE" or m == "base_classifier":
+                    continue
+                if m.strip():
+                    method_name = m.strip()
+                    break
+        except Exception:
+            method_name = None
+
+    method_pretty_map = {
+        "uncertainty_sampling": "Uncertainty Sampling",
+        "diversity_sampling": "Diversity Sampling", 
+        "query_by_comitee": "Query by Comitee",
+        "random_sampling": "Random Sampling",
+    }
+    method_pretty = method_pretty_map.get(method_name or "", method_name or "Unknown Method")
+    
+    # Get additional info for title
+    pool_size = None
+    if "data_size" in test_df.columns:
+        try:
+            for v in reversed(test_df["data_size"].tolist()):
+                if v is not None and not (isinstance(v, float) and pd.isna(v)):
+                    pool_size = v
+                    break
+        except Exception:
+            pass
+
+    train_data_size = None
+    if "train_data_size" in test_df.columns:
+        try:
+            for v in reversed(test_df["train_data_size"].tolist()):
+                if v is not None and not (isinstance(v, float) and pd.isna(v)):
+                    train_data_size = v
+                    break
+        except Exception:
+            pass
+
+    n_value = None
+    if "n" in test_df.columns:
+        try:
+            for v in reversed(test_df["n"].tolist()):
+                if v is not None and not (isinstance(v, float) and pd.isna(v)):
+                    n_value = v
+                    break
+        except Exception:
+            pass
+
+    # Create class names for title
+    class_names = [metric.replace("recall_", "").replace("_", " ").title() for metric in recall_metrics]
+    classes_str = ", ".join(class_names)
+    
+    title_parts = [f"{method_pretty} Per-Class Recall ({classes_str})"]
+    
+    def _fmt_intish(v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, float) and pd.isna(v):
+            return None
+        try:
+            if isinstance(v, (int,)):
+                return str(int(v))
+            if isinstance(v, float):
+                if float(v).is_integer():
+                    return str(int(v))
+                return str(v)
+            s = str(v).strip()
+            if not s:
+                return None
+            f = float(s)
+            if f.is_integer():
+                return str(int(f))
+            return s
+        except Exception:
+            try:
+                return str(v)
+            except Exception:
+                return None
+
+    pool_size_s = _fmt_intish(pool_size)
+    if pool_size_s is not None:
+        title_parts.append(f"pool_size={pool_size_s}")
+    train_data_size_s = _fmt_intish(train_data_size)
+    if train_data_size_s is not None:
+        title_parts.append(f"train_data_size={train_data_size_s}")
+    n_value_s = _fmt_intish(n_value)
+    if n_value_s is not None:
+        title_parts.append(f"n={n_value_s}")
+
+    title = " | ".join(title_parts)
+    plt.title(title)
+    plt.legend(loc="best", fontsize=10)
+    plt.grid(True, alpha=0.3)
+
+    # Save
+    out_path = os.path.join(output_dir, f"combined_recalls_group_{group_num}.jpeg")
+    plt.savefig(out_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    return out_path
+
+
 def _derive_result_folder_name(input_path: str) -> str:
     base = os.path.splitext(os.path.basename(input_path))[0]
     if base.startswith("results"):
@@ -358,6 +582,9 @@ def main() -> int:
         for metric in sorted(metric_keys):
             if metric == "avg_uncertainty_pool":
                 continue
+            # Skip individual recall metrics since we now plot them combined
+            if metric.startswith("recall_"):
+                continue
             _plot_metric(
                 test_idx=idx,
                 test_df=test_df,
@@ -365,6 +592,13 @@ def main() -> int:
                 output_dir=output_dir,
                 accuracy_percent=args.accuracy_percent,
             )
+        
+        # Plot combined recalls if recall metrics exist
+        _plot_combined_recalls(
+            test_idx=idx,
+            test_df=test_df,
+            output_dir=output_dir,
+        )
 
     return 0
 
