@@ -59,8 +59,9 @@ class ActiveLearningAnalyzer:
                 
             method_df = df[df['method'] == method].copy()
             
-            # Sort by train data size
+            # Sort by train data size and remove duplicates (keep last)
             method_df = method_df.sort_values('train_data_size')
+            method_df = method_df.drop_duplicates(subset=['train_data_size'], keep='last')
             
             # Extract metrics
             train_sizes = method_df['train_data_size'].tolist()
