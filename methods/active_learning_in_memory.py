@@ -24,20 +24,20 @@ except Exception as e:
     print(f"Warning: failed to print dataset info: {e}")
 
 # ⚙️ CONFIGURABLE PARAMETERS
-MAX_SAMPLES = 3000
-TEST_SAMPLE_LIMIT = 500
-BASE_TRAIN_SIZE = 10
+MAX_SAMPLES = 18000
+TEST_SAMPLE_LIMIT = 2000
+BASE_TRAIN_SIZE = 100
 
 class ActiveLearning:
     hyper_params = {
-        "N": 10,         # number of samples selected each iteration
+        "N": 2000,         # number of samples selected each iteration
         "T": 0.01,        # model prediction un-certainty threshold
         "T_patience": 3,  # stop if mean_uncertainty(selected_batch) < T for this many consecutive iterations
-        "uncertainty_plateau_eps": 0.01,  # stop if selected batch mean uncertainty stops decreasing (min drop)
-        "uncertainty_plateau_patience": 7,  # consecutive iterations with <eps improvement before stop
+        "uncertainty_plateau_eps": 0.0,   # disable uncertainty plateau (set to 0)
+        "uncertainty_plateau_patience": 0,  # disable uncertainty plateau (set to 0)
         "accuracy_threshold": None,  # optional: stop if test accuracy >= threshold (None disables)
-        "label_budget": 3000, # None,  # optional hard budget on total labelled samples used for training
-        "max_iterations": 300,  # maximum number of iterations
+        "label_budget": 10000, # None,  # optional hard budget on total labelled samples used for training
+        "max_iterations": 12,  # maximum number of iterations
         "stratified_batch": False,  # make per-iteration selected batch roughly class-balanced
         "seed": None,
         "deterministic": False,
@@ -520,8 +520,12 @@ class ActiveLearning:
         patience = ActiveLearning.hyper_params.get("uncertainty_plateau_patience", 1)
         if not isinstance(eps, (int, float)):
             eps = 0.0
-        if not isinstance(patience, int) or patience <= 0:
+        if not isinstance(patience, int) or patience < 0:
             patience = 1
+
+        # Skip uncertainty plateau check if disabled (patience = 0)
+        if patience == 0:
+            return False, "continue"
 
         prev = state.get("prev_selected_unc")
         streak = int(state.get("plateau_streak", 0) or 0)
