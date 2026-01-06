@@ -21,7 +21,8 @@ torch.backends.cudnn.benchmark = True
 torch.set_float32_matmul_precision("high")
 
 class JobClassifierTrainer:
-    model_name = "EuroBERT/EuroBERT-210m"
+    #model_name="EuroBERT/EuroBERT-210m",
+    model_name = "distilbert-base-uncased"
 
     # 🔒 SABİT LABEL UZAYI (ASLA DEĞİŞMEZ)
     ALL_LABELS = [
