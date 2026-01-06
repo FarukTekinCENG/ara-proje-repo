@@ -28,6 +28,9 @@ MAX_SAMPLES = 18000
 TEST_SAMPLE_LIMIT = 2000
 BASE_TRAIN_SIZE = 100
 
+# Global model cache to avoid repeated loading
+_GLOBAL_MODEL_CACHE = {}
+
 class ActiveLearning:
     hyper_params = {
         "N": 2000,         # number of samples selected each iteration
@@ -41,7 +44,7 @@ class ActiveLearning:
         "stratified_batch": False,  # make per-iteration selected batch roughly class-balanced
         "seed": None,
         "deterministic": False,
-        "predict_batch_size": 5000,
+        "predict_batch_size": 10000,  # Increased for faster prediction
         "verbose_pages": False,
     }
     BASE_DIR = "./base_classifier"
@@ -265,12 +268,27 @@ class ActiveLearning:
     def train_iterate(samples, source_model_dir=None, save_dir=None, previous_trainer=None):
         trainer = JobClassifierTrainer()
         
-        # Load tokenizer/model from given source_model_dir (or base)
+        # Load tokenizer/model from given source_model_dir (or base) - with caching
         source_model_dir = source_model_dir or ActiveLearning.BASE_DIR
-        if os.path.exists(source_model_dir):
-            trainer.load_model(source_model_dir)
+        
+        # Use cached model if available (but NEVER for training - only for evaluation)
+        cache_key = f"trainer_{source_model_dir}"
+        if cache_key in _GLOBAL_MODEL_CACHE and save_dir is None:
+            # Only use cache for evaluation, not for training
+            trainer = _GLOBAL_MODEL_CACHE[cache_key]
+            print(f"[cache] Using cached trainer for evaluation from {source_model_dir}")
         else:
-            trainer.initialize_model()
+            trainer = JobClassifierTrainer()
+            if os.path.exists(source_model_dir):
+                trainer.load_model(source_model_dir)
+                print(f"[cache] Loading trainer from {source_model_dir}")
+            else:
+                trainer.initialize_model()
+                print(f"[cache] Initializing new trainer")
+            
+            # Only cache if this is for evaluation (no save_dir)
+            if save_dir is None:
+                _GLOBAL_MODEL_CACHE[cache_key] = trainer
         
         # Persist only the base HF model id as model_name; run folder is already stored via params['run_model_dir']
         try:
@@ -693,13 +711,19 @@ class ActiveLearning:
         try:
             # Load each model & make predictions on (up to) max_samples unlabelled pool items.
             for idx, model_name in enumerate(models):
-                predictor = ModelPredictor(model_name)
-                try:
-                    predictor.load_model()
-                    print(f"[committee] member {idx} loaded: {model_name}")
-                except Exception as e:
-                    print(f"[committee] failed to load member {idx} ({model_name}): {e}")
-                    continue
+                cache_key = f"predictor_{model_name}"
+                if cache_key in _GLOBAL_MODEL_CACHE:
+                    predictor = _GLOBAL_MODEL_CACHE[cache_key]
+                    print(f"[cache] Using cached predictor {model_name}")
+                else:
+                    predictor = ModelPredictor(model_name)
+                    try:
+                        predictor.load_model()
+                        print(f"[committee] member {idx} loaded and cached: {model_name}")
+                        _GLOBAL_MODEL_CACHE[cache_key] = predictor
+                    except Exception as e:
+                        print(f"[committee] failed to load member {idx} ({model_name}): {e}")
+                        continue
 
                 batch_size = 1000
                 page = 0
@@ -909,7 +933,16 @@ class ActiveLearning:
                 print(f"Evaluating BASE classifier on test set ({len(test_samples)} samples)...")
 
                 base_trainer = JobClassifierTrainer()
-                base_trainer.load_model(ActiveLearning.BASE_DIR)
+                
+                # Use cached base classifier
+                cache_key = f"trainer_{ActiveLearning.BASE_DIR}"
+                if cache_key in _GLOBAL_MODEL_CACHE:
+                    base_trainer = _GLOBAL_MODEL_CACHE[cache_key]
+                    print(f"[cache] Using cached base classifier")
+                else:
+                    base_trainer.load_model(ActiveLearning.BASE_DIR)
+                    _GLOBAL_MODEL_CACHE[cache_key] = base_trainer
+                    print(f"[cache] Loading and caching base classifier")
 
                 base_accuracy = ActiveLearning.evaluate_on_test_set(
                     base_trainer, test_samples
