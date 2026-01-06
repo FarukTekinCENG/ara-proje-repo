@@ -193,13 +193,16 @@ def build_intelligent_balanced_dataset(
     print(f"[prepare_balanced_dataset] Target total size: {target_total_size}")
     print(f"[prepare_balanced_dataset] Labels sorted by frequency: {labels_by_count}")
     
-    # First pass: Take all minority classes
+    # First pass: Take all minority classes (only the smallest 4 classes)
     minority_classes = []
     majority_classes = []
     
-    for label in labels_by_count:
+    # Define minority threshold - only take all from the 4 smallest classes
+    minority_threshold = 4  # Only first 4 classes are considered minority
+    
+    for i, label in enumerate(labels_by_count):
         available_rows = by_label[label]
-        if len(available_rows) <= remaining_size and len(balanced_rows) + len(available_rows) < target_total_size:
+        if i < minority_threshold and len(balanced_rows) + len(available_rows) < target_total_size:
             # This is a minority class - take all
             balanced_rows.extend(available_rows)
             remaining_size -= len(available_rows)
