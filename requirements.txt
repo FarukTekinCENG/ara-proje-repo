@@ -1,0 +1,14 @@
+torch
+transformers
+datasets
+scikit-learn
+pandas
+numpy
+matplotlib
+seaborn
+psycopg2-binary
+python-dotenv
+sentence-transformers
+scipy
+joblib
+openpyxl
