@@ -144,7 +144,7 @@ def _plot_combined_metric(
     
     metric_pretty_map = {
         "accuracy": "Accuracy",
-        "macro_f1": "Macro F1",
+        "macro_f1": "F1-Score",
         "avg_uncertainty_pool": "Average Uncertainty of Pool",
         "selected_samples_avg_uncertainty": "Average Uncertainty of Selected Samples",
     }
@@ -201,20 +201,44 @@ def _plot_combined_metric(
     plt.xticks(range(0, max_iteration + 1, 1))
     plt.gca().xaxis.set_major_locator(MultipleLocator(1))
     
-    # Set y-axis limits
+    # Set y-axis limits and scale
     if metric == "accuracy" and accuracy_percent:
-        plt.ylim(0, 100)
+        plt.ylim(25, 100)  # Wide range to include BASE (28.6) and all iterations
         plt.gca().yaxis.set_major_locator(MultipleLocator(10))
-    else:
-        plt.ylim(0, 1)
+        plt.gca().yaxis.set_minor_locator(MultipleLocator(5))
+    elif metric == "avg_uncertainty_pool":
+        # Linear scale with wide range for better differentiation
+        plt.ylim(0.1, 0.9)  # Wide range to show all uncertainty data
         plt.gca().yaxis.set_major_locator(MultipleLocator(0.1))
+        plt.gca().yaxis.set_minor_locator(MultipleLocator(0.05))
+    elif "selected_samples_avg_uncertainty" in metric:
+        # Linear scale with wide range for better differentiation
+        plt.yscale('linear')  # Explicitly linear scale
+        plt.ylim(0.0, 1.0)  # Full range from 0 to 1
+        plt.gca().yaxis.set_major_locator(MultipleLocator(0.1))
+        plt.gca().yaxis.set_minor_locator(MultipleLocator(0.05))
+    else:
+        # Linear scale with WIDE range for better differentiation
+        # Explicitly set linear scale to ensure no log scale is applied
+        plt.yscale('linear')  # Explicitly linear scale
+        # Set appropriate limits based on metric
+        if metric == "macro_f1":
+            plt.ylim(0.1, 0.85)  # VERY WIDE range - from low values to high values
+        elif "recall" in metric:
+            plt.ylim(0.0, 1.0)  # Full range for recall
+        else:
+            plt.ylim(0.1, 1.0)  # Default wide range
+        
+        # Fine-grained linear scale tick marks for better differentiation
+        plt.gca().yaxis.set_major_locator(MultipleLocator(0.1))
+        plt.gca().yaxis.set_minor_locator(MultipleLocator(0.05))
     
     # Title
     title = f"Combined {metric_pretty} Performance Across All Tests"
     plt.title(title, fontsize=14, fontweight='bold', pad=20)
     
     # Legend
-    plt.legend(loc="best", fontsize=10, framealpha=0.9)
+    plt.legend(loc="best", fontsize=20, framealpha=0.9)
     
     # Grid
     plt.grid(True, alpha=0.3, linestyle='--')

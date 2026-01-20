@@ -164,11 +164,27 @@ def _plot_metric(
     plt.ylabel(ylabel)
 
     if metric == "accuracy" and accuracy_percent:
-        plt.ylim(0, 100)
+        plt.ylim(25, 100)  # Wide range to include BASE (28.6) and all iterations
         plt.gca().yaxis.set_major_locator(MultipleLocator(10))
-    else:
-        plt.ylim(0, 1)
+        plt.gca().yaxis.set_minor_locator(MultipleLocator(5))
+    elif "uncertainty" in metric:
+        # Linear scale with wide range for better differentiation
+        plt.ylim(0.1, 0.9)  # Wide range to show all uncertainty data
         plt.gca().yaxis.set_major_locator(MultipleLocator(0.1))
+        plt.gca().yaxis.set_minor_locator(MultipleLocator(0.05))
+    else:
+        # Linear scale with WIDE range for better differentiation
+        # Set appropriate limits based on metric
+        if metric == "macro_f1":
+            plt.ylim(0.1, 0.85)  # VERY WIDE range - from low values to high values
+        elif "recall" in metric:
+            plt.ylim(0.0, 1.0)  # Full range for recall
+        else:
+            plt.ylim(0.1, 1.0)  # Default wide range
+        
+        # Fine-grained linear scale tick marks for better differentiation
+        plt.gca().yaxis.set_major_locator(MultipleLocator(0.1))
+        plt.gca().yaxis.set_minor_locator(MultipleLocator(0.05))
 
     def _last_non_null(series: pd.Series) -> Optional[Any]:
         try:
@@ -260,7 +276,7 @@ def _plot_metric(
 
     metric_pretty_map = {
         "accuracy": "Accuracy",
-        "macro_f1": "Macro F1",
+        "macro_f1": "F1-Score",
         "avg_uncertainty_pool": "Average Uncertainty of Pool",
         "avg_uncertainty": "Average Uncertainty of Pool",
         "selected_samples_avg_uncertainty": "Average Uncertainty of Selected Batch",
@@ -283,7 +299,7 @@ def _plot_metric(
 
     title = " | ".join(title_parts)
     plt.title(title)
-    plt.legend(loc="best", fontsize=8)
+    plt.legend(loc="best", fontsize=16)
     plt.grid(True)
 
     file_name = f"{metric}.jpeg"
@@ -412,8 +428,11 @@ def _plot_recall_group(
     xlabel = x_col if x_col is not None else "Iteration"
     plt.xlabel(xlabel)
     plt.ylabel("Recall")
-    plt.ylim(0, 1)
+    # Linear scale with full range for better differentiation
+    plt.ylim(0.0, 1.0)  # Full range from zero to one
+    # Fine-grained linear scale tick marks for better differentiation
     plt.gca().yaxis.set_major_locator(MultipleLocator(0.1))
+    plt.gca().yaxis.set_minor_locator(MultipleLocator(0.05))
     
     # Title
     method_name = None
@@ -511,7 +530,7 @@ def _plot_recall_group(
 
     title = " | ".join(title_parts)
     plt.title(title)
-    plt.legend(loc="best", fontsize=10)
+    plt.legend(loc="best", fontsize=20)
     plt.grid(True, alpha=0.3)
 
     # Save
